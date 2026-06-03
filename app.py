@@ -102,43 +102,62 @@ for chart_def in CHARTS:
 st.divider()
 st.subheader("Download as Excel")
 
-if st.button("Generate Excel file"):
+col1, col2 = st.columns([3, 1])
+with col1:
+    excel_filename = st.text_input("File name", value="battery_analysis", label_visibility="collapsed",
+                                   placeholder="File name (without .xlsx)")
+with col2:
+    generate = st.button("Generate Excel file", use_container_width=True)
+
+if generate:
+    fname = (excel_filename.strip() or "battery_analysis").removesuffix(".xlsx") + ".xlsx"
+
     with st.spinner("Building Excel workbook…"):
 
-        # Collect all relevant column indices
-        all_col_indices = []
-        for c in CHARTS:
-            all_col_indices.extend(c["cols"])
-        all_col_indices = sorted(set(all_col_indices))
+        # ── Collect relevant columns ──────────────────────────────────────────
+        all_col_indices = sorted(set(i for c in CHARTS for i in c["cols"] if i < len(df.columns)))
 
-        # Build a trimmed dataframe: time + all relevant columns
-        export_cols = [df.columns[0]] + [df.columns[i] for i in all_col_indices if i < len(df.columns)]
-        df_export = df[export_cols].copy()
-        df_export[df_export.columns[0]] = time_col.dt.strftime("%Y-%m-%d %H:%M:%S")
+        # ── Full data export dataframe (time as real datetime) ────────────────
+        export_cols = [df.columns[0]] + [df.columns[i] for i in all_col_indices]
+        df_full = df[export_cols].copy()
+        df_full[df_full.columns[0]] = time_col  # keep as datetime objects
+
+        # ── Downsampled dataframe for charts (max ~2000 rows) ─────────────────
+        step = max(1, len(df_full) // 2000)
+        df_chart = df_full.iloc[::step].reset_index(drop=True)
 
         wb = Workbook()
 
-        # ── Data sheet ────────────────────────────────────────────────────────
+        # ── Helper: write a dataframe to a sheet with real timestamps ─────────
+        def write_sheet(ws, data: pd.DataFrame):
+            # Header
+            ws.append(list(data.columns))
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+            # Rows
+            for row_vals in data.itertuples(index=False, name=None):
+                ws.append(list(row_vals))
+            # Format column A as datetime
+            dt_fmt = "YYYY-MM-DD HH:MM:SS"
+            for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
+                for cell in row:
+                    cell.number_format = dt_fmt
+
+        # ── Data sheet (full resolution) ──────────────────────────────────────
         ws_data = wb.active
         ws_data.title = "Data"
+        write_sheet(ws_data, df_full)
 
-        for r in dataframe_to_rows(df_export, index=False, header=True):
-            ws_data.append(r)
+        # ── Chart Data sheet (downsampled) ────────────────────────────────────
+        ws_cd = wb.create_sheet("Chart Data")
+        write_sheet(ws_cd, df_chart)
 
-        # Bold header row
-        for cell in ws_data[1]:
-            cell.font = Font(bold=True)
-
-        # Map original col index → Excel column letter in the Data sheet
-        # Data sheet columns: col 1 = time, col 2 onwards = all_col_indices in order
-        excel_col_map = {}  # original df col index → 1-based col number in ws_data
-        excel_col_map[0] = 1  # time col
-        for sheet_col, orig_idx in enumerate(
-            [i for i in all_col_indices if i < len(df.columns)], start=2
-        ):
-            excel_col_map[orig_idx] = sheet_col
-
-        nrows = len(df_export)
+        # col index map for Chart Data sheet
+        chart_col_map = {}   # original df col index → 1-based col in ws_cd
+        chart_col_map[0] = 1
+        for sc, oi in enumerate(all_col_indices, start=2):
+            chart_col_map[oi] = sc
+        n_chart_rows = len(df_chart)
 
         # ── Chart sheets ──────────────────────────────────────────────────────
         for chart_def in CHARTS:
@@ -149,34 +168,32 @@ if st.button("Generate Excel file"):
             chart.style = 10
             chart.height = 15
             chart.width = 30
-            chart.x_axis.title = "Row (time)"
+            chart.x_axis.title = "Time"
             chart.y_axis.title = "Value"
 
-            valid_cols = [i for i in chart_def["cols"] if i in excel_col_map]
+            valid_cols = [i for i in chart_def["cols"] if i in chart_col_map]
             if valid_cols:
-                min_sc = excel_col_map[valid_cols[0]]
-                max_sc = excel_col_map[valid_cols[-1]]
-                data_ref = Reference(ws_data, min_col=min_sc, max_col=max_sc,
-                                     min_row=1, max_row=nrows + 1)
+                min_sc = chart_col_map[valid_cols[0]]
+                max_sc = chart_col_map[valid_cols[-1]]
+                data_ref = Reference(ws_cd, min_col=min_sc, max_col=max_sc,
+                                     min_row=1, max_row=n_chart_rows + 1)
                 chart.add_data(data_ref, titles_from_data=True)
 
-                # Apply consistent colors per series
                 for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
                     col_name = df.columns[orig_idx]
-                    hex_color = series_color(col_name, fb_idx).lstrip("#")
-                    ser.graphicalProperties.line.solidFill = hex_color
-                    ser.graphicalProperties.line.width = 15000  # 1.5pt
+                    ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
+                    ser.graphicalProperties.line.width = 12000  # 1.2pt
 
             ws_chart.add_chart(chart, "A1")
 
-        # ── Save to bytes ─────────────────────────────────────────────────────
+        # ── Save ──────────────────────────────────────────────────────────────
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
 
     st.download_button(
-        label="⬇️ Download Excel",
+        label=f"⬇️ Download {fname}",
         data=buf,
-        file_name="battery_analysis.xlsx",
+        file_name=fname,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
