@@ -267,7 +267,6 @@ if generate:
             chart.x_axis.tickLblPos = "low"
             chart.y_axis.title = "Value"
             chart.y_axis.numFmt = "General"
-            chart.y_axis.crossAx = chart.x_axis
 
             # ── Legend below the plot area, not overlapping ────────────────
             legend = Legend()
