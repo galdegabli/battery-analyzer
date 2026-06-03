@@ -8,6 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
+from openpyxl.chart.legend import Legend
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
@@ -230,30 +231,49 @@ if generate:
 
         # ── Single Charts sheet — all 4 charts stacked vertically ─────────────
         ws_charts = wb.create_sheet("Charts")
-        CHART_H = 15   # height in cm
-        ROW_OFFSET = 30  # rows between chart anchors (~15 cm each)
+        CHART_H = 18   # height in cm (extra for below-chart legend)
+        ROW_OFFSET = 36  # rows between chart anchors
 
         for chart_idx, chart_def in enumerate(CHARTS):
             chart = LineChart()
             chart.title = chart_def["subtitle"]
             chart.style = 10
             chart.height = CHART_H
-            chart.width = 30
+            chart.width = 35
+
+            # ── Axes ──────────────────────────────────────────────────────────
             chart.x_axis.title = "Time"
+            chart.x_axis.numFmt = "dd/mm/yyyy hh:mm"
+            chart.x_axis.majorGridlines = None   # cleaner look
+            chart.x_axis.tickLblPos = "low"
             chart.y_axis.title = "Value"
+            chart.y_axis.numFmt = "General"
+            chart.y_axis.crossAx = chart.x_axis
+
+            # ── Legend below the plot area, not overlapping ────────────────
+            legend = Legend()
+            legend.position = "b"       # bottom
+            legend.overlay = False      # outside the plot area
+            chart.legend = legend
 
             valid_cols = [i for i in chart_def["cols"] if i in chart_col_map]
             if valid_cols:
+                # data series
                 min_sc = chart_col_map[valid_cols[0]]
                 max_sc = chart_col_map[valid_cols[-1]]
                 data_ref = Reference(ws_data, min_col=min_sc, max_col=max_sc,
                                      min_row=1, max_row=n_data_rows + 1)
                 chart.add_data(data_ref, titles_from_data=True)
 
+                # x-axis categories (date column)
+                cats = Reference(ws_data, min_col=1, min_row=2, max_row=n_data_rows + 1)
+                chart.set_categories(cats)
+
                 for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
                     col_name = df.columns[orig_idx]
                     ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
                     ser.graphicalProperties.line.width = 12000  # 1.2pt
+                    ser.smooth = False
 
             anchor = f"A{1 + chart_idx * ROW_OFFSET}"
             ws_charts.add_chart(chart, anchor)
