@@ -122,22 +122,15 @@ if generate:
         df_full = df[export_cols].copy()
         df_full[df_full.columns[0]] = time_col  # keep as datetime objects
 
-        # ── Downsampled dataframe for charts (max ~2000 rows) ─────────────────
-        step = max(1, len(df_full) // 2000)
-        df_chart = df_full.iloc[::step].reset_index(drop=True)
-
         wb = Workbook()
 
         # ── Helper: write a dataframe to a sheet with real timestamps ─────────
         def write_sheet(ws, data: pd.DataFrame):
-            # Header
             ws.append(list(data.columns))
             for cell in ws[1]:
                 cell.font = Font(bold=True)
-            # Rows
             for row_vals in data.itertuples(index=False, name=None):
                 ws.append(list(row_vals))
-            # Format column A as datetime
             dt_fmt = "YYYY-MM-DD HH:MM:SS"
             for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
                 for cell in row:
@@ -148,25 +141,22 @@ if generate:
         ws_data.title = "Data"
         write_sheet(ws_data, df_full)
 
-        # ── Chart Data sheet (downsampled) ────────────────────────────────────
-        ws_cd = wb.create_sheet("Chart Data")
-        write_sheet(ws_cd, df_chart)
-
-        # col index map for Chart Data sheet
-        chart_col_map = {}   # original df col index → 1-based col in ws_cd
-        chart_col_map[0] = 1
+        # col index map for Data sheet
+        chart_col_map = {0: 1}
         for sc, oi in enumerate(all_col_indices, start=2):
             chart_col_map[oi] = sc
-        n_chart_rows = len(df_chart)
+        n_data_rows = len(df_full)
 
-        # ── Chart sheets ──────────────────────────────────────────────────────
-        for chart_def in CHARTS:
-            ws_chart = wb.create_sheet(title=chart_def["title"][:31])
+        # ── Single Charts sheet — all 4 charts stacked vertically ─────────────
+        ws_charts = wb.create_sheet("Charts")
+        CHART_H = 15   # height in cm
+        ROW_OFFSET = 30  # rows between chart anchors (~15 cm each)
 
+        for chart_idx, chart_def in enumerate(CHARTS):
             chart = LineChart()
             chart.title = chart_def["subtitle"]
             chart.style = 10
-            chart.height = 15
+            chart.height = CHART_H
             chart.width = 30
             chart.x_axis.title = "Time"
             chart.y_axis.title = "Value"
@@ -175,8 +165,8 @@ if generate:
             if valid_cols:
                 min_sc = chart_col_map[valid_cols[0]]
                 max_sc = chart_col_map[valid_cols[-1]]
-                data_ref = Reference(ws_cd, min_col=min_sc, max_col=max_sc,
-                                     min_row=1, max_row=n_chart_rows + 1)
+                data_ref = Reference(ws_data, min_col=min_sc, max_col=max_sc,
+                                     min_row=1, max_row=n_data_rows + 1)
                 chart.add_data(data_ref, titles_from_data=True)
 
                 for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
@@ -184,7 +174,8 @@ if generate:
                     ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
                     ser.graphicalProperties.line.width = 12000  # 1.2pt
 
-            ws_chart.add_chart(chart, "A1")
+            anchor = f"A{1 + chart_idx * ROW_OFFSET}"
+            ws_charts.add_chart(chart, anchor)
 
         # ── Save ──────────────────────────────────────────────────────────────
         buf = io.BytesIO()
