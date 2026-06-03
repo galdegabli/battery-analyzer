@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import streamlit as st
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
-from openpyxl.chart.series import SeriesLabel
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
@@ -153,18 +152,20 @@ if st.button("Generate Excel file"):
             chart.x_axis.title = "Row (time)"
             chart.y_axis.title = "Value"
 
-            for fb_idx, orig_idx in enumerate(chart_def["cols"]):
-                if orig_idx not in excel_col_map:
-                    continue
-                sheet_col = excel_col_map[orig_idx]
-                col_name = df.columns[orig_idx]
+            valid_cols = [i for i in chart_def["cols"] if i in excel_col_map]
+            if valid_cols:
+                min_sc = excel_col_map[valid_cols[0]]
+                max_sc = excel_col_map[valid_cols[-1]]
+                data_ref = Reference(ws_data, min_col=min_sc, max_col=max_sc,
+                                     min_row=1, max_row=nrows + 1)
+                chart.add_data(data_ref, titles_from_data=True)
 
-                data_ref = Reference(ws_data, min_col=sheet_col, min_row=1, max_row=nrows + 1)
-                series = chart.series.append(data_ref)  # returns None; build differently
-                chart.series[-1].title = SeriesLabel(v=col_name)
-                chart.series[-1].graphicalProperties.line.solidFill = (
-                    series_color(col_name, fb_idx).lstrip("#")
-                )
+                # Apply consistent colors per series
+                for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
+                    col_name = df.columns[orig_idx]
+                    hex_color = series_color(col_name, fb_idx).lstrip("#")
+                    ser.graphicalProperties.line.solidFill = hex_color
+                    ser.graphicalProperties.line.width = 15000  # 1.5pt
 
             ws_chart.add_chart(chart, "A1")
 
