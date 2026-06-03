@@ -81,8 +81,10 @@ def make_plotly_chart(col_indices: list, title: str) -> go.Figure:
         title=title,
         xaxis_title="Time",
         xaxis=dict(rangeslider=dict(visible=True), type="date"),
+        yaxis=dict(fixedrange=False),          # allow Y-axis zoom & pan
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
+        hoverlabel=dict(namelength=-1),        # show full series name in tooltip
         height=500,
     )
     return fig
