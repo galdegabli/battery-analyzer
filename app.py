@@ -1,9 +1,11 @@
 import io
+import json
 import re
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Font
@@ -62,8 +64,8 @@ CHARTS = [
     {"title": "Voltage Derivative",    "cols": list(range(87, 102)),"subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time"},
 ]
 
-# ── Plotly helper ─────────────────────────────────────────────────────────────
-def make_plotly_chart(col_indices: list, title: str) -> go.Figure:
+# ── Chart HTML builder (custom sorted hover tooltip via JS) ───────────────────
+def make_chart_html(col_indices: list, title: str, chart_id: str) -> str:
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -75,26 +77,105 @@ def make_plotly_chart(col_indices: list, title: str) -> go.Figure:
             mode="lines",
             name=col_name,
             line=dict(color=series_color(col_name, fb_idx)),
+            hoverinfo="none",   # suppress Plotly's own tooltip; we draw ours
         ))
     fig.update_layout(
         title=title,
         xaxis_title="Time",
         xaxis=dict(rangeslider=dict(visible=True), type="date"),
-        yaxis=dict(fixedrange=False),          # allow Y-axis zoom & pan
+        yaxis=dict(fixedrange=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified",
-        hoverlabel=dict(namelength=-1),        # show full series name in tooltip
+        hovermode="x",          # fires hover event across all traces at cursor x
         height=500,
+        margin=dict(t=60, b=80, l=60, r=20),
     )
-    return fig
+    fig_json = fig.to_json()
+
+    return f"""
+<!DOCTYPE html><html><head>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body {{ margin:0; padding:0; background:transparent; }}
+  #tip_{chart_id} {{
+    position: fixed;
+    display: none;
+    background: rgba(20,20,30,0.96);
+    color: #e0e0f0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: "Segoe UI", monospace;
+    pointer-events: none;
+    z-index: 9999;
+    max-height: 420px;
+    overflow-y: auto;
+    border: 1px solid #444466;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    line-height: 1.9;
+    min-width: 220px;
+  }}
+  hr.tip-hr {{ border: none; border-top: 1px solid #444466; margin: 4px 0 6px 0; }}
+</style>
+</head><body>
+<div id="plt_{chart_id}"></div>
+<div id="tip_{chart_id}"></div>
+<script>
+(function() {{
+  var fig = {fig_json};
+  Plotly.newPlot('plt_{chart_id}', fig.data, fig.layout, {{responsive:true}}).then(function() {{
+    var div = document.getElementById('plt_{chart_id}');
+    var tip = document.getElementById('tip_{chart_id}');
+
+    div.on('plotly_hover', function(ev) {{
+      var pts = ev.points.slice().filter(function(p) {{
+        return p.y !== null && p.y !== undefined && !isNaN(p.y);
+      }});
+      // sort descending by value
+      pts.sort(function(a,b) {{ return b.y - a.y; }});
+
+      if (!pts.length) {{ tip.style.display='none'; return; }}
+
+      var timeStr = pts[0].x;
+      var html = '<b style="color:#a0a8ff">' + timeStr + '</b>'
+               + '<hr class="tip-hr">';
+      pts.forEach(function(p) {{
+        var col = (p.data.line && p.data.line.color) ? p.data.line.color : '#fff';
+        var val = (typeof p.y === 'number')
+          ? p.y.toLocaleString(undefined, {{maximumFractionDigits:4}})
+          : p.y;
+        html += '<span style="color:' + col + '">━</span>&nbsp;'
+              + p.data.name + ':&nbsp;<b>' + val + '</b><br>';
+      }});
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+    }});
+
+    div.on('plotly_unhover', function() {{
+      tip.style.display = 'none';
+    }});
+
+    document.addEventListener('mousemove', function(e) {{
+      var x = e.clientX + 16, y = e.clientY - 12;
+      var tw = tip.offsetWidth || 240, th = tip.offsetHeight || 300;
+      if (x + tw > window.innerWidth)  x = e.clientX - tw - 10;
+      if (y + th > window.innerHeight) y = e.clientY - th - 10;
+      tip.style.left = x + 'px';
+      tip.style.top  = y + 'px';
+    }});
+  }});
+}})();
+</script>
+</body></html>
+"""
 
 
 # ── Render charts ─────────────────────────────────────────────────────────────
-for chart_def in CHARTS:
-    st.subheader(f"{'Chart ' + str(CHARTS.index(chart_def)+1)} — {chart_def['title']}")
-    st.plotly_chart(
-        make_plotly_chart(chart_def["cols"], chart_def["subtitle"]),
-        use_container_width=True,
+for idx, chart_def in enumerate(CHARTS):
+    st.subheader(f"Chart {idx+1} — {chart_def['title']}")
+    components.html(
+        make_chart_html(chart_def["cols"], chart_def["subtitle"], f"c{idx}"),
+        height=570,
+        scrolling=False,
     )
 
 
