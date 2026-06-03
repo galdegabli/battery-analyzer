@@ -66,7 +66,8 @@ CHARTS = [
 ]
 
 # ── Chart HTML builder (custom sorted hover tooltip via JS) ───────────────────
-def make_chart_html(col_indices: list, title: str, chart_id: str) -> str:
+def make_chart_html(col_indices: list, title: str, chart_id: str,
+                    x_range: tuple | None = None) -> str:
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -80,15 +81,18 @@ def make_chart_html(col_indices: list, title: str, chart_id: str) -> str:
             line=dict(color=series_color(col_name, fb_idx)),
             hoverinfo="none",   # suppress Plotly's own tooltip; we draw ours
         ))
+    xaxis_cfg = dict(type="date", rangeslider=dict(visible=False))
+    if x_range:
+        xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
     fig.update_layout(
         title=title,
         xaxis_title="Time",
-        xaxis=dict(rangeslider=dict(visible=True), type="date"),
+        xaxis=xaxis_cfg,
         yaxis=dict(fixedrange=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x",          # fires hover event across all traces at cursor x
-        height=500,
-        margin=dict(t=60, b=80, l=60, r=20),
+        hovermode="x",
+        height=460,
+        margin=dict(t=50, b=40, l=60, r=20),
     )
     fig_json = fig.to_json()
 
@@ -170,12 +174,27 @@ def make_chart_html(col_indices: list, title: str, chart_id: str) -> str:
 """
 
 
+# ── Global time range slider ──────────────────────────────────────────────────
+t_min = time_col.min().to_pydatetime()
+t_max = time_col.max().to_pydatetime()
+
+st.markdown("#### Time range")
+t_start, t_end = st.slider(
+    "time_range",
+    min_value=t_min,
+    max_value=t_max,
+    value=(t_min, t_max),
+    format="DD/MM/YY HH:mm",
+    label_visibility="collapsed",
+)
+
 # ── Render charts ─────────────────────────────────────────────────────────────
 for idx, chart_def in enumerate(CHARTS):
     st.subheader(f"Chart {idx+1} — {chart_def['title']}")
     components.html(
-        make_chart_html(chart_def["cols"], chart_def["subtitle"], f"c{idx}"),
-        height=570,
+        make_chart_html(chart_def["cols"], chart_def["subtitle"], f"c{idx}",
+                        x_range=(t_start, t_end)),
+        height=490,
         scrolling=False,
     )
 
