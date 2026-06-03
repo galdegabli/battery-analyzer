@@ -175,8 +175,23 @@ def make_chart_html(col_indices: list, title: str, chart_id: str,
 
 
 # ── Global time range slider ──────────────────────────────────────────────────
+from datetime import timedelta
+
 t_min = time_col.min().to_pydatetime()
 t_max = time_col.max().to_pydatetime()
+
+# Neutral steel-blue slider (override Streamlit's default red/pink)
+st.markdown("""
+<style>
+  div[data-testid="stSlider"] [role="slider"] {
+      background-color: #5b8db8 !important;
+  }
+  div[data-testid="stSlider"] [data-baseweb="slider"] [role="progressbar"],
+  div[data-testid="stSlider"] [data-baseweb="slider"] div[class*="Track"] {
+      background-color: #5b8db8 !important;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("#### Time range")
 t_start, t_end = st.slider(
@@ -184,6 +199,7 @@ t_start, t_end = st.slider(
     min_value=t_min,
     max_value=t_max,
     value=(t_min, t_max),
+    step=timedelta(minutes=1),
     format="DD/MM/YY HH:mm",
     label_visibility="collapsed",
 )
