@@ -69,12 +69,46 @@ else:
     time_col = pd.to_datetime(raw_time.str.replace(r"\s+", " ", regex=True),
                                format="%d/%m/%Y %H:%M:%S", errors="coerce")
 
-# ── Chart definitions ─────────────────────────────────────────────────────────
+# ── Column name → index resolver ─────────────────────────────────────────────
+def find_cols(pattern: str) -> list[int]:
+    """Return column indices whose names start with `pattern`, sorted numerically."""
+    def num_key(i):
+        m = re.search(r"(\d+)", df.columns[i][len(pattern):])
+        return int(m.group(1)) if m else 0
+    return sorted(
+        [i for i, c in enumerate(df.columns) if c.startswith(pattern)],
+        key=num_key
+    )
+
+def find_col(name: str) -> list[int]:
+    """Return a single-element list for an exact column name match."""
+    matches = [i for i, c in enumerate(df.columns) if c == name]
+    return matches[:1]
+
+# ── Chart definitions (resolved by column name, not position) ────────────────
 CHARTS = [
-    {"title": "Full Charge Capacity",  "cols": [17],               "subtitle": "SE Full_Charge_Capacity [Ah] vs Time"},
-    {"title": "Cell Voltage",          "cols": list(range(31, 46)), "subtitle": "CellVoltage_0 – CellVoltage_14 vs Time",    "multiply": 0.0001},
-    {"title": "Cell Distance",         "cols": list(range(102,117)),"subtitle": "CellDistanceAh_0 – CellDistanceAh_14 vs Time"},
-    {"title": "Voltage Derivative",    "cols": list(range(87, 102)),"subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time",     "decimals": 0},
+    {
+        "title":    "Full Charge Capacity",
+        "cols":     find_col("SE Full_Charge_Capacity [Ah]"),
+        "subtitle": "SE Full_Charge_Capacity [Ah] vs Time",
+    },
+    {
+        "title":    "Cell Voltage",
+        "cols":     find_cols("CellVoltage_"),
+        "subtitle": "CellVoltage_0 – CellVoltage_14 vs Time",
+        "multiply": 0.001,
+    },
+    {
+        "title":    "Cell Distance",
+        "cols":     find_cols("CellDistanceAh_"),
+        "subtitle": "CellDistanceAh_0 – CellDistanceAh_14 vs Time",
+    },
+    {
+        "title":    "Voltage Derivative",
+        "cols":     find_cols("CellFdFVdQ_"),
+        "subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time",
+        "decimals": 0,
+    },
 ]
 
 # ── Chart HTML builder (custom sorted hover tooltip via JS) ───────────────────
