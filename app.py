@@ -7,11 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import Workbook
-from openpyxl.chart import LineChart, Reference
-from openpyxl.chart.axis import ChartLines
-from openpyxl.chart.legend import Legend
 from openpyxl.styles import Font
-from openpyxl.utils.dataframe import dataframe_to_rows
 
 st.set_page_config(page_title="Battery Data Analyzer", layout="wide")
 st.title("Battery Data Analyzer")
@@ -261,6 +257,9 @@ for idx, chart_def in enumerate(CHARTS):
 
 
 # ── Excel export ──────────────────────────────────────────────────────────────
+import math
+import xlsxwriter
+
 st.divider()
 st.subheader("Download as Excel")
 
@@ -278,103 +277,86 @@ if generate:
 
         # ── Collect relevant columns ──────────────────────────────────────────
         all_col_indices = sorted(set(i for c in CHARTS for i in c["cols"] if i < len(df.columns)))
-
-        # ── Full data export dataframe (time as real datetime) ────────────────
         export_cols = [df.columns[0]] + [df.columns[i] for i in all_col_indices]
-        df_full = df[export_cols].copy()
-        df_full[df_full.columns[0]] = time_col  # keep as datetime objects
 
-        wb = Workbook()
+        # Sheet column number for each original df column index (1-based)
+        # col 1 = time, col 2+ = data columns in all_col_indices order
+        sheet_col = {0: 0}  # xlsxwriter is 0-based
+        for pos, oi in enumerate(all_col_indices, start=1):
+            sheet_col[oi] = pos
+        n = len(df)
 
-        # ── Helper: write a dataframe to a sheet with real timestamps ─────────
-        def write_sheet(ws, data: pd.DataFrame):
-            ws.append(list(data.columns))
-            for cell in ws[1]:
-                cell.font = Font(bold=True)
-            for row_vals in data.itertuples(index=False, name=None):
-                # convert pandas Timestamp → native Python datetime for openpyxl
-                row_list = [v.to_pydatetime() if hasattr(v, "to_pydatetime") else v
-                            for v in row_vals]
-                ws.append(row_list)
-            dt_fmt = "DD/MM/YYYY HH:MM:SS"
-            for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
-                for cell in row:
-                    cell.number_format = dt_fmt
+        buf = io.BytesIO()
+        wb = xlsxwriter.Workbook(buf, {'in_memory': True})
 
-        # ── Data sheet (full resolution) ──────────────────────────────────────
-        ws_data = wb.active
-        ws_data.title = "Data"
-        write_sheet(ws_data, df_full)
+        # ── Formats ───────────────────────────────────────────────────────────
+        fmt_bold   = wb.add_format({'bold': True})
+        fmt_date   = wb.add_format({'num_format': 'dd/mm/yyyy hh:mm:ss', 'bold': False})
 
-        # col index map for Data sheet
-        chart_col_map = {0: 1}
-        for sc, oi in enumerate(all_col_indices, start=2):
-            chart_col_map[oi] = sc
-        n_data_rows = len(df_full)
+        # ── Data sheet ────────────────────────────────────────────────────────
+        ws_data = wb.add_worksheet('Data')
 
-        # ── Chart Data sheet: downsampled to ~3000 rows so charts stay fast ───
-        step = max(1, n_data_rows // 3000)
-        df_chart = df_full.iloc[::step].reset_index(drop=True)
-        ws_cd = wb.create_sheet("Chart Data")
-        write_sheet(ws_cd, df_chart)
-        n_cd_rows = len(df_chart)
+        # Header row
+        ws_data.write(0, 0, df.columns[0], fmt_bold)
+        for pos, oi in enumerate(all_col_indices, start=1):
+            ws_data.write(0, pos, df.columns[oi], fmt_bold)
 
-        # col map for the Chart Data sheet (same column order as Data)
-        cd_col_map = {0: 1}
-        for sc, oi in enumerate(all_col_indices, start=2):
-            cd_col_map[oi] = sc
+        # Data rows
+        for row_i, (t, *vals) in enumerate(
+            zip(time_col, *[df.iloc[:, oi] for oi in all_col_indices]), start=1
+        ):
+            dt = t.to_pydatetime() if pd.notna(t) else None
+            if dt:
+                ws_data.write_datetime(row_i, 0, dt, fmt_date)
+            for pos, v in enumerate(vals, start=1):
+                fv = float(v) if (pd.notna(v) and not (isinstance(v, float) and math.isnan(v))) else None
+                if fv is not None:
+                    ws_data.write_number(row_i, pos, fv)
 
-        # ── Single Charts sheet — all 4 charts stacked vertically ─────────────
-        ws_charts = wb.create_sheet("Charts")
-        CHART_H = 18
-        ROW_OFFSET = 36
+        # ── Charts sheet ──────────────────────────────────────────────────────
+        ws_charts = wb.add_worksheet('Charts')
+        CHART_H   = 500   # pixels
+        CHART_W   = 960
+        ROW_PX    = 20    # approximate row height in pixels
+        CHART_GAP = CHART_H + 20
 
         for chart_idx, chart_def in enumerate(CHARTS):
-            chart = LineChart()
-            chart.title = chart_def["title"]
-            chart.style = 10
-            chart.height = CHART_H
-            chart.width = 35
+            chart = wb.add_chart({'type': 'line'})
 
-            # ── Legend below the plot area ─────────────────────────────────────
-            legend = Legend()
-            legend.position = "b"
-            legend.overlay = False
-            chart.legend = legend
+            valid_cols = [i for i in chart_def["cols"] if i in sheet_col]
+            for fb_idx, orig_idx in enumerate(valid_cols):
+                col_name  = df.columns[orig_idx]
+                col_letter_idx = sheet_col[orig_idx]
+                color = series_color(col_name, fb_idx)
 
-            valid_cols = [i for i in chart_def["cols"] if i in cd_col_map]
-            if valid_cols:
-                min_sc = cd_col_map[valid_cols[0]]
-                max_sc = cd_col_map[valid_cols[-1]]
-                data_ref = Reference(ws_cd, min_col=min_sc, max_col=max_sc,
-                                     min_row=1, max_row=n_cd_rows + 1)
-                chart.add_data(data_ref, titles_from_data=True)
-                # fresh Reference each time — avoids object mutation across charts
-                chart.set_categories(Reference(ws_cd, min_col=1, min_row=2, max_row=n_cd_rows + 1))
+                chart.add_series({
+                    'name':       f"=Data!${chr(65+col_letter_idx)}$1",
+                    'categories': f"=Data!$A$2:$A${n+1}",
+                    'values':     f"=Data!${chr(65+col_letter_idx)}$2:${chr(65+col_letter_idx)}${n+1}",
+                    'line':       {'color': color, 'width': 1.25},
+                    'marker':     {'type': 'none'},
+                })
 
-                for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
-                    col_name = df.columns[orig_idx]
-                    ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
-                    ser.graphicalProperties.line.width = 12000
-                    ser.smooth = False
+            chart.set_title({'name': chart_def["title"]})
+            chart.set_x_axis({
+                'name':            'Time',
+                'num_format':      'dd/mm/yy hh:mm',
+                'major_gridlines': {'visible': True,  'line': {'color': '#D0D0D0'}},
+                'minor_gridlines': {'visible': False},
+            })
+            chart.set_y_axis({
+                'name':            'Value',
+                'major_gridlines': {'visible': True,  'line': {'color': '#D0D0D0'}},
+                'minor_gridlines': {'visible': True,  'line': {'color': '#EBEBEB'}},
+            })
+            chart.set_legend({'position': 'bottom'})
+            chart.set_size({'width': CHART_W, 'height': CHART_H})
 
-            # Set axis properties AFTER add_data to prevent them being overwritten
-            chart.x_axis.title = "Time"
-            chart.x_axis.numFmt = "dd/mm/yy hh:mm"
-            chart.x_axis.tickLblPos = "low"
-            chart.x_axis.majorGridlines = ChartLines()
-            chart.x_axis.minorGridlines = None
-            chart.y_axis.title = "Value"
-            chart.y_axis.numFmt = "General"
-            chart.y_axis.majorGridlines = ChartLines()
-            chart.y_axis.minorGridlines = ChartLines()
+            # Stack charts vertically
+            top_px = chart_idx * CHART_GAP
+            ws_charts.insert_chart(0, 0, chart, {'x_offset': 0, 'y_offset': top_px})
 
-            anchor = f"A{1 + chart_idx * ROW_OFFSET}"
-            ws_charts.add_chart(chart, anchor)
-
-        # ── Save ──────────────────────────────────────────────────────────────
-        buf = io.BytesIO()
-        wb.save(buf)
+        wb.close()
         buf.seek(0)
 
     st.download_button(
