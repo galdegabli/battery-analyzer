@@ -17,9 +17,21 @@ st.title("Battery Data Analyzer")
 
 # ── 15 distinct colors shared across all charts (index = cell/series number) ──
 COLORS = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
+    "#1f77b4",  # 0  steel blue
+    "#e6331a",  # 1  strong red
+    "#2ca02c",  # 2  forest green
+    "#ff7f0e",  # 3  vivid orange
+    "#9467bd",  # 4  purple
+    "#00aacc",  # 5  cyan
+    "#8c564b",  # 6  brown
+    "#ff1493",  # 7  deep pink
+    "#17becf",  # 8  teal
+    "#b8b800",  # 9  dark yellow
+    "#8c1aff",  # 10 violet
+    "#d62728",  # 11 crimson
+    "#00b300",  # 12 bright green
+    "#cc6600",  # 13 dark orange
+    "#0040ff",  # 14 cobalt blue
 ]
 
 def series_color(col_name: str, fallback_idx: int) -> str:
