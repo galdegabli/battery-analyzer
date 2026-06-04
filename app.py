@@ -59,23 +59,30 @@ else:
 
 # ── Chart definitions ─────────────────────────────────────────────────────────
 CHARTS = [
-    {"title": "Full Charge Capacity",  "cols": [17],              "subtitle": "SE Full_Charge_Capacity [Ah] vs Time"},
-    {"title": "Cell Voltage",          "cols": list(range(31, 46)), "subtitle": "CellVoltage_0 – CellVoltage_14 vs Time"},
+    {"title": "Full Charge Capacity",  "cols": [17],               "subtitle": "SE Full_Charge_Capacity [Ah] vs Time"},
+    {"title": "Cell Voltage",          "cols": list(range(31, 46)), "subtitle": "CellVoltage_0 – CellVoltage_14 vs Time",    "multiply": 0.0001},
     {"title": "Cell Distance",         "cols": list(range(102,117)),"subtitle": "CellDistanceAh_0 – CellDistanceAh_14 vs Time"},
-    {"title": "Voltage Derivative",    "cols": list(range(87, 102)),"subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time"},
+    {"title": "Voltage Derivative",    "cols": list(range(87, 102)),"subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time",     "decimals": 0},
 ]
 
 # ── Chart HTML builder (custom sorted hover tooltip via JS) ───────────────────
 def make_chart_html(col_indices: list, title: str, chart_id: str,
-                    x_range: tuple | None = None) -> str:
+                    x_range: tuple | None = None,
+                    multiply: float | None = None,
+                    decimals: int | None = None) -> str:
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
             continue
         col_name = df.columns[i]
+        y = pd.to_numeric(df.iloc[:, i], errors="coerce")
+        if multiply is not None:
+            y = y * multiply
+        if decimals is not None:
+            y = y.round(decimals)
         fig.add_trace(go.Scatter(
             x=time_col,
-            y=pd.to_numeric(df.iloc[:, i], errors="coerce"),
+            y=y,
             mode="lines",
             name=col_name,
             line=dict(color=series_color(col_name, fb_idx)),
@@ -85,14 +92,15 @@ def make_chart_html(col_indices: list, title: str, chart_id: str,
     if x_range:
         xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
     fig.update_layout(
-        title=title,
+        title=dict(text=title, y=0.97, x=0.5, xanchor="center", yanchor="top"),
         xaxis_title="Time",
         xaxis=xaxis_cfg,
         yaxis=dict(fixedrange=False),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        # legend placed below the chart, outside the plot area
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5),
         hovermode="x",
-        height=460,
-        margin=dict(t=50, b=40, l=60, r=20),
+        height=480,
+        margin=dict(t=40, b=100, l=60, r=20),
     )
     fig_json = fig.to_json()
 
@@ -197,8 +205,10 @@ for idx, chart_def in enumerate(CHARTS):
     st.subheader(f"Chart {idx+1} — {chart_def['title']}")
     components.html(
         make_chart_html(chart_def["cols"], chart_def["subtitle"], f"c{idx}",
-                        x_range=(t_start, t_end)),
-        height=490,
+                        x_range=(t_start, t_end),
+                        multiply=chart_def.get("multiply"),
+                        decimals=chart_def.get("decimals")),
+        height=520,
         scrolling=False,
     )
 
