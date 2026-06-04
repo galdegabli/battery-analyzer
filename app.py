@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import Workbook
-from openpyxl.chart import ScatterChart, Reference, Series
+from openpyxl.chart import LineChart, Reference
+from openpyxl.chart.axis import ChartLines
 from openpyxl.chart.legend import Legend
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -311,46 +312,65 @@ if generate:
             chart_col_map[oi] = sc
         n_data_rows = len(df_full)
 
+        # ── Chart Data sheet: downsampled to ~3000 rows so charts stay fast ───
+        step = max(1, n_data_rows // 3000)
+        df_chart = df_full.iloc[::step].reset_index(drop=True)
+        ws_cd = wb.create_sheet("Chart Data")
+        write_sheet(ws_cd, df_chart)
+        n_cd_rows = len(df_chart)
+
+        # col map for the Chart Data sheet (same column order as Data)
+        cd_col_map = {0: 1}
+        for sc, oi in enumerate(all_col_indices, start=2):
+            cd_col_map[oi] = sc
+
         # ── Single Charts sheet — all 4 charts stacked vertically ─────────────
         ws_charts = wb.create_sheet("Charts")
         CHART_H = 18
         ROW_OFFSET = 36
 
-        x_ref = Reference(ws_data, min_col=1, min_row=2, max_row=n_data_rows + 1)
+        cats_ref = Reference(ws_cd, min_col=1, min_row=2, max_row=n_cd_rows + 1)
 
         for chart_idx, chart_def in enumerate(CHARTS):
-            # ScatterChart = XY chart → proper continuous time axis
-            chart = ScatterChart()
-            chart.scatterStyle = "line"   # lines without markers
+            chart = LineChart()
             chart.title = chart_def["title"]
             chart.style = 10
             chart.height = CHART_H
             chart.width = 35
 
-            # ── Axes ──────────────────────────────────────────────────────────
+            # ── X axis: date scale with ticks ─────────────────────────────────
             chart.x_axis.title = "Time"
             chart.x_axis.numFmt = "dd/mm/yy hh:mm"
             chart.x_axis.tickLblPos = "low"
-            chart.x_axis.majorGridlines = None
+            chart.x_axis.majorGridlines = ChartLines()   # vertical gridlines
+            chart.x_axis.minorGridlines = None
+
+            # ── Y axis: auto-scale with major + minor gridlines ───────────────
             chart.y_axis.title = "Value"
             chart.y_axis.numFmt = "General"
+            chart.y_axis.majorGridlines = ChartLines()
+            chart.y_axis.minorGridlines = ChartLines()
 
-            # ── Legend below the plot area ─────────────────────────────────
+            # ── Legend below the plot area ─────────────────────────────────────
             legend = Legend()
             legend.position = "b"
             legend.overlay = False
             chart.legend = legend
 
-            valid_cols = [i for i in chart_def["cols"] if i in chart_col_map]
-            for fb_idx, orig_idx in enumerate(valid_cols):
-                col_name = df.columns[orig_idx]
-                sc = chart_col_map[orig_idx]
-                y_ref = Reference(ws_data, min_col=sc, min_row=2, max_row=n_data_rows + 1)
-                ser = Series(y_ref, x_ref, title=col_name)
-                ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
-                ser.graphicalProperties.line.width = 12000
-                ser.marker.symbol = "none"
-                chart.series.append(ser)
+            valid_cols = [i for i in chart_def["cols"] if i in cd_col_map]
+            if valid_cols:
+                min_sc = cd_col_map[valid_cols[0]]
+                max_sc = cd_col_map[valid_cols[-1]]
+                data_ref = Reference(ws_cd, min_col=min_sc, max_col=max_sc,
+                                     min_row=1, max_row=n_cd_rows + 1)
+                chart.add_data(data_ref, titles_from_data=True)
+                chart.set_categories(cats_ref)
+
+                for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
+                    col_name = df.columns[orig_idx]
+                    ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
+                    ser.graphicalProperties.line.width = 12000
+                    ser.smooth = False
 
             anchor = f"A{1 + chart_idx * ROW_OFFSET}"
             ws_charts.add_chart(chart, anchor)
