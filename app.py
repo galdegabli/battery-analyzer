@@ -329,27 +329,12 @@ if generate:
         CHART_H = 18
         ROW_OFFSET = 36
 
-        cats_ref = Reference(ws_cd, min_col=1, min_row=2, max_row=n_cd_rows + 1)
-
         for chart_idx, chart_def in enumerate(CHARTS):
             chart = LineChart()
             chart.title = chart_def["title"]
             chart.style = 10
             chart.height = CHART_H
             chart.width = 35
-
-            # ── X axis: date scale with ticks ─────────────────────────────────
-            chart.x_axis.title = "Time"
-            chart.x_axis.numFmt = "dd/mm/yy hh:mm"
-            chart.x_axis.tickLblPos = "low"
-            chart.x_axis.majorGridlines = ChartLines()   # vertical gridlines
-            chart.x_axis.minorGridlines = None
-
-            # ── Y axis: auto-scale with major + minor gridlines ───────────────
-            chart.y_axis.title = "Value"
-            chart.y_axis.numFmt = "General"
-            chart.y_axis.majorGridlines = ChartLines()
-            chart.y_axis.minorGridlines = ChartLines()
 
             # ── Legend below the plot area ─────────────────────────────────────
             legend = Legend()
@@ -364,13 +349,25 @@ if generate:
                 data_ref = Reference(ws_cd, min_col=min_sc, max_col=max_sc,
                                      min_row=1, max_row=n_cd_rows + 1)
                 chart.add_data(data_ref, titles_from_data=True)
-                chart.set_categories(cats_ref)
+                # fresh Reference each time — avoids object mutation across charts
+                chart.set_categories(Reference(ws_cd, min_col=1, min_row=2, max_row=n_cd_rows + 1))
 
                 for fb_idx, (orig_idx, ser) in enumerate(zip(valid_cols, chart.series)):
                     col_name = df.columns[orig_idx]
                     ser.graphicalProperties.line.solidFill = series_color(col_name, fb_idx).lstrip("#")
                     ser.graphicalProperties.line.width = 12000
                     ser.smooth = False
+
+            # Set axis properties AFTER add_data to prevent them being overwritten
+            chart.x_axis.title = "Time"
+            chart.x_axis.numFmt = "dd/mm/yy hh:mm"
+            chart.x_axis.tickLblPos = "low"
+            chart.x_axis.majorGridlines = ChartLines()
+            chart.x_axis.minorGridlines = None
+            chart.y_axis.title = "Value"
+            chart.y_axis.numFmt = "General"
+            chart.y_axis.majorGridlines = ChartLines()
+            chart.y_axis.minorGridlines = ChartLines()
 
             anchor = f"A{1 + chart_idx * ROW_OFFSET}"
             ws_charts.add_chart(chart, anchor)
