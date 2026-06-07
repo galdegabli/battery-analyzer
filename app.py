@@ -50,8 +50,12 @@ if uploaded_file is None:
 with st.spinner("Loading file…"):
     if uploaded_file.name.lower().endswith(".csv"):
         df = pd.read_csv(uploaded_file, header=0, low_memory=False)
+        is_re_export = False
     else:
-        df = pd.read_excel(uploaded_file, header=0)
+        xl = pd.ExcelFile(uploaded_file)
+        is_re_export = "_meta" in xl.sheet_names
+        sheet = "Data" if is_re_export else xl.sheet_names[0]
+        df = xl.parse(sheet, header=0)
 
 st.success(f"Loaded {len(df):,} rows × {len(df.columns)} columns")
 
@@ -93,7 +97,7 @@ CHARTS = [
         "title":    "Cell Voltage",
         "cols":     find_cols("CellVoltage_"),
         "subtitle": "CellVoltage_0 – CellVoltage_14 vs Time",
-        "multiply": 0.001,
+        "auto_multiply": True,   # factor computed from data so result has 1 digit before decimal
     },
     {
         "title":    "Cell Distance",
@@ -107,6 +111,24 @@ CHARTS = [
         "decimals": 0,
     },
 ]
+
+# ── Auto-multiply: bring Cell Voltage (or any flagged chart) to 1 digit before decimal ──
+import math as _math
+
+def _auto_multiply(col_indices: list) -> float:
+    """Return a power-of-10 factor so the typical value has exactly 1 digit before the decimal."""
+    if not col_indices:
+        return 1.0
+    vals = pd.concat([pd.to_numeric(df.iloc[:, i], errors="coerce") for i in col_indices])
+    median = vals.abs().median()
+    if pd.isna(median) or median == 0:
+        return 1.0
+    digits_before_decimal = _math.floor(_math.log10(float(median))) + 1
+    return 10 ** (-(digits_before_decimal - 1))
+
+for _chart in CHARTS:
+    if _chart.get("auto_multiply") and _chart["cols"]:
+        _chart["multiply"] = _auto_multiply(_chart["cols"])
 
 # ── Chart HTML builder (custom sorted hover tooltip via JS) ───────────────────
 def make_chart_html(col_indices: list, title: str, chart_id: str,
@@ -214,7 +236,9 @@ def make_chart_html(col_indices: list, title: str, chart_id: str,
       var x = e.clientX + 16, y = e.clientY - 12;
       var tw = tip.offsetWidth || 240, th = tip.offsetHeight || 300;
       if (x + tw > window.innerWidth)  x = e.clientX - tw - 10;
+      if (x < 0) x = 0;
       if (y + th > window.innerHeight) y = e.clientY - th - 10;
+      if (y < 0) y = 0;
       tip.style.left = x + 'px';
       tip.style.top  = y + 'px';
     }});
@@ -259,13 +283,15 @@ for idx, chart_def in enumerate(CHARTS):
 # ── Excel export ──────────────────────────────────────────────────────────────
 import math
 import xlsxwriter
+from xlsxwriter.utility import xl_col_to_name
 
 st.divider()
 st.subheader("Download as Excel")
 
 col1, col2 = st.columns([3, 1])
 with col1:
-    excel_filename = st.text_input("File name", value="battery_analysis", label_visibility="collapsed",
+    default_name = uploaded_file.name.rsplit(".", 1)[0]
+    excel_filename = st.text_input("File name", value=default_name, label_visibility="collapsed",
                                    placeholder="File name (without .xlsx)")
 with col2:
     generate = st.button("Generate Excel file", use_container_width=True)
@@ -279,12 +305,20 @@ if generate:
         all_col_indices = sorted(set(i for c in CHARTS for i in c["cols"] if i < len(df.columns)))
         export_cols = [df.columns[0]] + [df.columns[i] for i in all_col_indices]
 
-        # Sheet column number for each original df column index (1-based)
-        # col 1 = time, col 2+ = data columns in all_col_indices order
-        sheet_col = {0: 0}  # xlsxwriter is 0-based
+        # Sheet column number for each original df column index (0-based, col 0 = time)
+        sheet_col = {0: 0}
         for pos, oi in enumerate(all_col_indices, start=1):
             sheet_col[oi] = pos
         n = len(df)
+
+        # Per-column transform: orig df col index → (multiply, decimals)
+        col_transforms = {}
+        for chart_def in CHARTS:
+            m = chart_def.get("multiply")
+            d = chart_def.get("decimals")
+            if m is not None or d is not None:
+                for oi in chart_def["cols"]:
+                    col_transforms[oi] = (m, d)
 
         buf = io.BytesIO()
         wb = xlsxwriter.Workbook(buf, {'in_memory': True})
@@ -308,31 +342,50 @@ if generate:
             dt = t.to_pydatetime() if pd.notna(t) else None
             if dt:
                 ws_data.write_datetime(row_i, 0, dt, fmt_date)
-            for pos, v in enumerate(vals, start=1):
+            for pos, (oi, v) in enumerate(zip(all_col_indices, vals), start=1):
                 fv = float(v) if (pd.notna(v) and not (isinstance(v, float) and math.isnan(v))) else None
                 if fv is not None:
+                    tm, td = col_transforms.get(oi, (None, None))
+                    if tm is not None:
+                        fv *= tm
+                    if td is not None:
+                        fv = round(fv, td)
                     ws_data.write_number(row_i, pos, fv)
 
         # ── Charts sheet ──────────────────────────────────────────────────────
         ws_charts = wb.add_worksheet('Charts')
+
+        # Excel date serial = days since 1899-12-30 (accounts for Excel's 1900 leap-year bug)
+        from datetime import datetime as _dt
+        _xl_epoch = _dt(1899, 12, 30)
+        def _to_xl_serial(ts):
+            d = ts.to_pydatetime().replace(tzinfo=None) - _xl_epoch
+            return d.days + d.seconds / 86400
+
+        _xl_min = _to_xl_serial(time_col.dropna().min())
+        _xl_max = _to_xl_serial(time_col.dropna().max())
+
         CHART_H   = 500   # pixels
         CHART_W   = 960
         ROW_PX    = 20    # approximate row height in pixels
         CHART_GAP = CHART_H + 20
 
         for chart_idx, chart_def in enumerate(CHARTS):
-            chart = wb.add_chart({'type': 'line'})
+            chart = wb.add_chart({'type': 'scatter', 'subtype': 'smooth'})
 
             valid_cols = [i for i in chart_def["cols"] if i in sheet_col]
+            if not valid_cols:
+                continue
             for fb_idx, orig_idx in enumerate(valid_cols):
                 col_name  = df.columns[orig_idx]
-                col_letter_idx = sheet_col[orig_idx]
-                color = series_color(col_name, fb_idx)
+                cli       = sheet_col[orig_idx]
+                col_ltr   = xl_col_to_name(cli)   # e.g. 0→A, 25→Z, 26→AA
+                color     = series_color(col_name, fb_idx)
 
                 chart.add_series({
-                    'name':       f"=Data!${chr(65+col_letter_idx)}$1",
+                    'name':       f"=Data!${col_ltr}$1",
                     'categories': f"=Data!$A$2:$A${n+1}",
-                    'values':     f"=Data!${chr(65+col_letter_idx)}$2:${chr(65+col_letter_idx)}${n+1}",
+                    'values':     f"=Data!${col_ltr}$2:${col_ltr}${n+1}",
                     'line':       {'color': color, 'width': 1.25},
                     'marker':     {'type': 'none'},
                 })
@@ -340,7 +393,10 @@ if generate:
             chart.set_title({'name': chart_def["title"]})
             chart.set_x_axis({
                 'name':            'Time',
+                'date_axis':       True,
                 'num_format':      'dd/mm/yy hh:mm',
+                'min':             _xl_min,
+                'max':             _xl_max,
                 'major_gridlines': {'visible': True,  'line': {'color': '#D0D0D0'}},
                 'minor_gridlines': {'visible': False},
             })
@@ -355,6 +411,11 @@ if generate:
             # Stack charts vertically
             top_px = chart_idx * CHART_GAP
             ws_charts.insert_chart(0, 0, chart, {'x_offset': 0, 'y_offset': top_px})
+
+        # Hidden marker so the app knows this file was exported by us
+        ws_meta = wb.add_worksheet('_meta')
+        ws_meta.write(0, 0, 'battery-analyzer-export-v1')
+        ws_meta.hide()
 
         wb.close()
         buf.seek(0)
