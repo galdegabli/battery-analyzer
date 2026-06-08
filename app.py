@@ -237,7 +237,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
         f"time_range_{file_prefix}",
         min_value=t_min, max_value=t_max,
         value=(t_min, t_max), step=timedelta(minutes=1),
-        format="DD/MM/YY HH:mm", label_visibility="collapsed",
+        format="%d/%m/%y %H:%M", label_visibility="collapsed",
     )
     for idx, chart_def in enumerate(charts):
         st.subheader(f"Chart {idx+1} — {chart_def['title']}")
@@ -285,161 +285,147 @@ else:
 
 
 # ── Excel export ─────────────────────────────────────────────────────────────────
-st.divider()
-st.subheader("Download as Excel")
-
-default_name = file_data[0]["stem"] if len(file_data) == 1 else "battery_analysis"
-
-col1, col2 = st.columns([3, 1])
-with col1:
-    excel_filename = st.text_input(
-        "File name", value=default_name,
-        label_visibility="collapsed",
-        placeholder="File name (without .xlsx)",
-    )
-with col2:
-    generate = st.button("Generate Excel file", use_container_width=True)
-
-
-def _safe_sheet(stem: str, prefix: str, used: set) -> str:
-    """Return a unique Excel sheet name ≤ 31 chars with no forbidden characters."""
-    clean = re.sub(r"[:\\/?\*\[\]]", "_", stem)
-    candidate = f"{prefix}_{clean}"[:31]
-    base, n = candidate, 1
-    while candidate in used:
-        candidate = f"{base[:29 - len(str(n))]}_{n}"
-        n += 1
-    used.add(candidate)
-    return candidate
-
-
 def _to_xl_serial(ts):
     """Convert a pandas Timestamp to an Excel date serial number."""
     d = ts.to_pydatetime().replace(tzinfo=None) - _dt(1899, 12, 30)
     return d.days + d.seconds / 86400
 
 
-if generate:
-    fname = (excel_filename.strip() or "battery_analysis").removesuffix(".xlsx") + ".xlsx"
+def _build_excel(fd: dict) -> bytes:
+    """Build a complete Excel workbook for one file and return its bytes."""
+    df       = fd["df"]
+    time_col = fd["time_col"]
+    charts   = fd["charts"]
 
-    with st.spinner("Building Excel workbook…"):
-        buf = io.BytesIO()
-        wb  = xlsxwriter.Workbook(buf, {"in_memory": True})
-        fmt_bold = wb.add_format({"bold": True})
-        fmt_date = wb.add_format({"num_format": "dd/mm/yyyy hh:mm:ss", "bold": False})
-        used_sheets: set = set()
+    all_col_indices = sorted(set(
+        i for c in charts for i in c["cols"] if i < len(df.columns)
+    ))
+    sheet_col = {0: 0}
+    for pos, oi in enumerate(all_col_indices, start=1):
+        sheet_col[oi] = pos
+    n = len(df)
 
+    col_transforms: dict = {}
+    for chart_def in charts:
+        m_val = chart_def.get("multiply")
+        d_val = chart_def.get("decimals")
+        if m_val is not None or d_val is not None:
+            for oi in chart_def["cols"]:
+                col_transforms[oi] = (m_val, d_val)
+
+    buf = io.BytesIO()
+    wb  = xlsxwriter.Workbook(buf, {"in_memory": True})
+    fmt_bold = wb.add_format({"bold": True})
+    fmt_date = wb.add_format({"num_format": "dd/mm/yyyy hh:mm:ss", "bold": False})
+
+    # ── Data sheet ────────────────────────────────────────────────────────────
+    ws_data = wb.add_worksheet("Data")
+    ws_data.write(0, 0, df.columns[0], fmt_bold)
+    for pos, oi in enumerate(all_col_indices, start=1):
+        ws_data.write(0, pos, df.columns[oi], fmt_bold)
+
+    for row_i, (t, *vals) in enumerate(
+        zip(time_col, *[df.iloc[:, oi] for oi in all_col_indices]), start=1
+    ):
+        dt_val = t.to_pydatetime() if pd.notna(t) else None
+        if dt_val:
+            ws_data.write_datetime(row_i, 0, dt_val, fmt_date)
+        for pos, (oi, v) in enumerate(zip(all_col_indices, vals), start=1):
+            fv = float(v) if (
+                pd.notna(v) and not (isinstance(v, float) and _math.isnan(v))
+            ) else None
+            if fv is not None:
+                tm, td = col_transforms.get(oi, (None, None))
+                if tm is not None:
+                    fv *= tm
+                if td is not None:
+                    fv = round(fv, td)
+                ws_data.write_number(row_i, pos, fv)
+
+    # ── Charts sheet ──────────────────────────────────────────────────────────
+    ws_charts = wb.add_worksheet("Charts")
+    CHART_H, CHART_W, CHART_GAP = 500, 960, 520
+    _xl_min = _to_xl_serial(time_col.dropna().min())
+    _xl_max = _to_xl_serial(time_col.dropna().max())
+
+    for chart_idx, chart_def in enumerate(charts):
+        chart = wb.add_chart({"type": "scatter", "subtype": "smooth"})
+        valid_cols = [i for i in chart_def["cols"] if i in sheet_col]
+        if not valid_cols:
+            continue
+        for fb_idx, orig_idx in enumerate(valid_cols):
+            col_name = df.columns[orig_idx]
+            col_ltr  = xl_col_to_name(sheet_col[orig_idx])
+            chart.add_series({
+                "name":       f"=Data!${col_ltr}$1",
+                "categories": f"=Data!$A$2:$A${n+1}",
+                "values":     f"=Data!${col_ltr}$2:${col_ltr}${n+1}",
+                "line":       {"color": series_color(col_name, fb_idx), "width": 1.25},
+                "marker":     {"type": "none"},
+            })
+        chart.set_title({"name": chart_def["title"]})
+        chart.set_x_axis({
+            "name": "Time", "date_axis": True, "num_format": "dd/mm/yy hh:mm",
+            "min": _xl_min, "max": _xl_max,
+            "major_gridlines": {"visible": True, "line": {"color": "#D0D0D0"}},
+            "minor_gridlines": {"visible": False},
+        })
+        chart.set_y_axis({
+            "name": "Value",
+            "major_gridlines": {"visible": True, "line": {"color": "#D0D0D0"}},
+            "minor_gridlines": {"visible": True, "line": {"color": "#EBEBEB"}},
+        })
+        chart.set_legend({"position": "bottom"})
+        chart.set_size({"width": CHART_W, "height": CHART_H})
+        ws_charts.insert_chart(0, 0, chart, {"x_offset": 0, "y_offset": chart_idx * CHART_GAP})
+
+    ws_meta = wb.add_worksheet("_meta")
+    ws_meta.write(0, 0, "battery-analyzer-export-v1")
+    ws_meta.hide()
+
+    wb.close()
+    return buf.getvalue()
+
+
+st.divider()
+st.subheader("Download as Excel")
+
+# Invalidate cached results when the uploaded file set changes
+_file_key = tuple(fd["name"] for fd in file_data)
+if st.session_state.get("_excel_key") != _file_key:
+    st.session_state.pop("_excel_results", None)
+    st.session_state["_excel_key"] = _file_key
+
+if len(file_data) == 1:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        excel_filename = st.text_input(
+            "File name", value=file_data[0]["stem"],
+            label_visibility="collapsed",
+            placeholder="File name (without .xlsx)",
+        )
+    with col2:
+        generate = st.button("Generate Excel file", use_container_width=True)
+    if generate:
+        with st.spinner("Building Excel workbook…"):
+            data = _build_excel(file_data[0])
+        fname = (excel_filename.strip() or file_data[0]["stem"]).removesuffix(".xlsx") + ".xlsx"
+        st.session_state["_excel_results"] = [(fname, data)]
+else:
+    generate = st.button("Generate Excel files")
+    if generate:
+        results = []
         for fd in file_data:
-            df       = fd["df"]
-            time_col = fd["time_col"]
-            charts   = fd["charts"]
-            stem     = fd["stem"]
+            with st.spinner(f"Building {fd['stem']}.xlsx…"):
+                results.append((fd["stem"] + ".xlsx", _build_excel(fd)))
+        st.session_state["_excel_results"] = results
 
-            # Map original df column index → sheet column position (0-based)
-            all_col_indices = sorted(set(
-                i for c in charts for i in c["cols"] if i < len(df.columns)
-            ))
-            sheet_col = {0: 0}
-            for pos, oi in enumerate(all_col_indices, start=1):
-                sheet_col[oi] = pos
-            n = len(df)
-
-            # Per-column transforms
-            col_transforms: dict = {}
-            for chart_def in charts:
-                m_val = chart_def.get("multiply")
-                d_val = chart_def.get("decimals")
-                if m_val is not None or d_val is not None:
-                    for oi in chart_def["cols"]:
-                        col_transforms[oi] = (m_val, d_val)
-
-            # ── Data sheet ────────────────────────────────────────────────
-            data_sheet = _safe_sheet(stem, "Data", used_sheets)
-            ws_data    = wb.add_worksheet(data_sheet)
-
-            ws_data.write(0, 0, df.columns[0], fmt_bold)
-            for pos, oi in enumerate(all_col_indices, start=1):
-                ws_data.write(0, pos, df.columns[oi], fmt_bold)
-
-            for row_i, (t, *vals) in enumerate(
-                zip(time_col, *[df.iloc[:, oi] for oi in all_col_indices]), start=1
-            ):
-                dt_val = t.to_pydatetime() if pd.notna(t) else None
-                if dt_val:
-                    ws_data.write_datetime(row_i, 0, dt_val, fmt_date)
-                for pos, (oi, v) in enumerate(zip(all_col_indices, vals), start=1):
-                    fv = float(v) if (
-                        pd.notna(v) and not (isinstance(v, float) and _math.isnan(v))
-                    ) else None
-                    if fv is not None:
-                        tm, td = col_transforms.get(oi, (None, None))
-                        if tm is not None:
-                            fv *= tm
-                        if td is not None:
-                            fv = round(fv, td)
-                        ws_data.write_number(row_i, pos, fv)
-
-            # ── Charts sheet ──────────────────────────────────────────────
-            charts_sheet = _safe_sheet(stem, "Charts", used_sheets)
-            ws_charts    = wb.add_worksheet(charts_sheet)
-
-            CHART_H   = 500
-            CHART_W   = 960
-            CHART_GAP = CHART_H + 20
-
-            _xl_min = _to_xl_serial(time_col.dropna().min())
-            _xl_max = _to_xl_serial(time_col.dropna().max())
-
-            for chart_idx, chart_def in enumerate(charts):
-                chart = wb.add_chart({"type": "scatter", "subtype": "smooth"})
-
-                valid_cols = [i for i in chart_def["cols"] if i in sheet_col]
-                if not valid_cols:
-                    continue
-
-                for fb_idx, orig_idx in enumerate(valid_cols):
-                    col_name = df.columns[orig_idx]
-                    cli      = sheet_col[orig_idx]
-                    col_ltr  = xl_col_to_name(cli)
-                    color    = series_color(col_name, fb_idx)
-                    chart.add_series({
-                        "name":       f"='{data_sheet}'!${col_ltr}$1",
-                        "categories": f"='{data_sheet}'!$A$2:$A${n+1}",
-                        "values":     f"='{data_sheet}'!${col_ltr}$2:${col_ltr}${n+1}",
-                        "line":       {"color": color, "width": 1.25},
-                        "marker":     {"type": "none"},
-                    })
-
-                chart.set_title({"name": chart_def["title"]})
-                chart.set_x_axis({
-                    "name":            "Time",
-                    "date_axis":       True,
-                    "num_format":      "dd/mm/yy hh:mm",
-                    "min":             _xl_min,
-                    "max":             _xl_max,
-                    "major_gridlines": {"visible": True, "line": {"color": "#D0D0D0"}},
-                    "minor_gridlines": {"visible": False},
-                })
-                chart.set_y_axis({
-                    "name":            "Value",
-                    "major_gridlines": {"visible": True, "line": {"color": "#D0D0D0"}},
-                    "minor_gridlines": {"visible": True, "line": {"color": "#EBEBEB"}},
-                })
-                chart.set_legend({"position": "bottom"})
-                chart.set_size({"width": CHART_W, "height": CHART_H})
-                ws_charts.insert_chart(0, 0, chart, {"x_offset": 0, "y_offset": chart_idx * CHART_GAP})
-
-        # Hidden marker so re-uploaded exports are detected
-        ws_meta = wb.add_worksheet("_meta")
-        ws_meta.write(0, 0, "battery-analyzer-export-v1")
-        ws_meta.hide()
-
-        wb.close()
-        buf.seek(0)
-
-    st.download_button(
-        label=f"⬇️ Download {fname}",
-        data=buf,
-        file_name=fname,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+if "_excel_results" in st.session_state:
+    for fname, data in st.session_state["_excel_results"]:
+        st.download_button(
+            label=f"⬇️ Download {fname}",
+            data=data,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_{fname}",
+        )
