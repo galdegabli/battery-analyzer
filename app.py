@@ -325,15 +325,23 @@ def _build_excel(fd: dict) -> bytes:
         if dt_val:
             ws_data.write_datetime(row_i, 0, dt_val, fmt_date)
 
-    # All other columns — convert to numeric, apply transforms where needed
+    # All other columns — numeric where possible, fall back to original text
     for col_i in range(1, len(df.columns)):
-        numeric = pd.to_numeric(df.iloc[:, col_i], errors="coerce")
+        col_series = df.iloc[:, col_i]
+        numeric = pd.to_numeric(col_series, errors="coerce")
         tm, td = col_transforms.get(col_i, (None, None))
         if tm is not None:
             numeric = numeric * tm
         if td is not None:
             numeric = numeric.round(td)
-        values = [float(v) if pd.notna(v) else None for v in numeric]
+        values = []
+        for num_v, orig_v in zip(numeric, col_series):
+            if pd.notna(num_v):
+                values.append(float(num_v))
+            elif pd.notna(orig_v):
+                values.append(str(orig_v))
+            else:
+                values.append(None)
         ws_data.write_column(1, col_i, values)
 
     # ── Charts sheet ──────────────────────────────────────────────────────────
