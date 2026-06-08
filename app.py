@@ -296,15 +296,9 @@ def _build_excel(fd: dict) -> bytes:
     df       = fd["df"]
     time_col = fd["time_col"]
     charts   = fd["charts"]
+    n        = len(df)
 
-    all_col_indices = sorted(set(
-        i for c in charts for i in c["cols"] if i < len(df.columns)
-    ))
-    sheet_col = {0: 0}
-    for pos, oi in enumerate(all_col_indices, start=1):
-        sheet_col[oi] = pos
-    n = len(df)
-
+    # Transforms only apply to specific chart columns
     col_transforms: dict = {}
     for chart_def in charts:
         m_val = chart_def.get("multiply")
@@ -318,29 +312,29 @@ def _build_excel(fd: dict) -> bytes:
     fmt_bold = wb.add_format({"bold": True})
     fmt_date = wb.add_format({"num_format": "dd/mm/yyyy hh:mm:ss", "bold": False})
 
-    # ── Data sheet ────────────────────────────────────────────────────────────
+    # ── Data sheet: ALL original columns ─────────────────────────────────────
     ws_data = wb.add_worksheet("Data")
-    ws_data.write(0, 0, df.columns[0], fmt_bold)
-    for pos, oi in enumerate(all_col_indices, start=1):
-        ws_data.write(0, pos, df.columns[oi], fmt_bold)
 
-    for row_i, (t, *vals) in enumerate(
-        zip(time_col, *[df.iloc[:, oi] for oi in all_col_indices]), start=1
-    ):
+    # Header row
+    for ci, col_name in enumerate(df.columns):
+        ws_data.write(0, ci, str(col_name), fmt_bold)
+
+    # Time column (col 0) — write as datetime
+    for row_i, t in enumerate(time_col, start=1):
         dt_val = t.to_pydatetime() if pd.notna(t) else None
         if dt_val:
             ws_data.write_datetime(row_i, 0, dt_val, fmt_date)
-        for pos, (oi, v) in enumerate(zip(all_col_indices, vals), start=1):
-            fv = float(v) if (
-                pd.notna(v) and not (isinstance(v, float) and _math.isnan(v))
-            ) else None
-            if fv is not None:
-                tm, td = col_transforms.get(oi, (None, None))
-                if tm is not None:
-                    fv *= tm
-                if td is not None:
-                    fv = round(fv, td)
-                ws_data.write_number(row_i, pos, fv)
+
+    # All other columns — convert to numeric, apply transforms where needed
+    for col_i in range(1, len(df.columns)):
+        numeric = pd.to_numeric(df.iloc[:, col_i], errors="coerce")
+        tm, td = col_transforms.get(col_i, (None, None))
+        if tm is not None:
+            numeric = numeric * tm
+        if td is not None:
+            numeric = numeric.round(td)
+        values = [float(v) if pd.notna(v) else None for v in numeric]
+        ws_data.write_column(1, col_i, values)
 
     # ── Charts sheet ──────────────────────────────────────────────────────────
     ws_charts = wb.add_worksheet("Charts")
@@ -350,12 +344,12 @@ def _build_excel(fd: dict) -> bytes:
 
     for chart_idx, chart_def in enumerate(charts):
         chart = wb.add_chart({"type": "scatter", "subtype": "smooth"})
-        valid_cols = [i for i in chart_def["cols"] if i in sheet_col]
+        valid_cols = [i for i in chart_def["cols"] if i < len(df.columns)]
         if not valid_cols:
             continue
         for fb_idx, orig_idx in enumerate(valid_cols):
             col_name = df.columns[orig_idx]
-            col_ltr  = xl_col_to_name(sheet_col[orig_idx])
+            col_ltr  = xl_col_to_name(orig_idx)   # sheet col = df col index
             chart.add_series({
                 "name":       f"=Data!${col_ltr}$1",
                 "categories": f"=Data!$A$2:$A${n+1}",
