@@ -170,10 +170,10 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
         title=dict(text=title, y=0.97, x=0.5, xanchor="center", yanchor="top"),
         xaxis_title="Time", xaxis=xaxis_cfg,
         yaxis=dict(fixedrange=False),
-        legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5,
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5,
                     entrywidth=160, entrywidthmode="pixels"),
-        hovermode="x", height=480,
-        margin=dict(t=40, b=240, l=60, r=20),
+        hovermode="x", height=560,
+        margin=dict(t=40, b=110, l=60, r=20),
     )
     fig_json = fig.to_json()
     return f"""
@@ -259,7 +259,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
                 multiply=chart_def.get("multiply"),
                 decimals=chart_def.get("decimals"),
             ),
-            height=680, scrolling=False,
+            height=630, scrolling=False,
         )
 
 
