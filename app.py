@@ -67,9 +67,18 @@ def load_file(f):
     return df, is_re_export
 
 
+def find_time_col_idx(df) -> int:
+    """Return the index of the date/time column by name, defaulting to 0."""
+    for i, col in enumerate(df.columns):
+        if re.search(r"date|time", str(col), re.IGNORECASE):
+            return i
+    return 0
+
+
 def parse_time(df):
-    """Parse the first column as datetime, auto-detecting ISO vs DD/MM/YYYY."""
-    raw = df.iloc[:, 0].astype(str).str.strip()
+    """Parse the date/time column (found by name) as datetime."""
+    idx = find_time_col_idx(df)
+    raw = df.iloc[:, idx].astype(str).str.strip()
     sample = raw.dropna().iloc[0] if not raw.dropna().empty else ""
     if re.match(r"\d{4}-\d{2}-\d{2}", sample):
         return pd.to_datetime(raw, format="%Y-%m-%d %H:%M:%S", errors="coerce")
@@ -258,6 +267,7 @@ file_data = []
 for f in uploaded_files:
     with st.spinner(f"Loading {f.name}…"):
         df, is_re_export = load_file(f)
+        time_col_idx = find_time_col_idx(df)
         time_col = parse_time(df)
         charts = build_charts(df)
         file_data.append({
@@ -265,6 +275,7 @@ for f in uploaded_files:
             "stem":         f.name.rsplit(".", 1)[0],
             "df":           df,
             "time_col":     time_col,
+            "time_col_idx": time_col_idx,
             "charts":       charts,
             "is_re_export": is_re_export,
         })
@@ -293,10 +304,12 @@ def _to_xl_serial(ts):
 
 def _build_excel(fd: dict) -> bytes:
     """Build a complete Excel workbook for one file and return its bytes."""
-    df       = fd["df"]
-    time_col = fd["time_col"]
-    charts   = fd["charts"]
-    n        = len(df)
+    df           = fd["df"]
+    time_col     = fd["time_col"]
+    charts       = fd["charts"]
+    time_col_idx = fd.get("time_col_idx", 0)
+    time_col_ltr = xl_col_to_name(time_col_idx)
+    n            = len(df)
 
     # Transforms only apply to specific chart columns
     col_transforms: dict = {}
@@ -319,14 +332,16 @@ def _build_excel(fd: dict) -> bytes:
     for ci, col_name in enumerate(df.columns):
         ws_data.write(0, ci, str(col_name), fmt_bold)
 
-    # Time column (col 0) — write as datetime
+    # Time column — write as datetime at its actual position
     for row_i, t in enumerate(time_col, start=1):
         dt_val = t.to_pydatetime() if pd.notna(t) else None
         if dt_val:
-            ws_data.write_datetime(row_i, 0, dt_val, fmt_date)
+            ws_data.write_datetime(row_i, time_col_idx, dt_val, fmt_date)
 
     # All other columns — numeric where possible, fall back to original text
-    for col_i in range(1, len(df.columns)):
+    for col_i in range(len(df.columns)):
+        if col_i == time_col_idx:
+            continue  # already written as datetime
         col_series = df.iloc[:, col_i]
         numeric = pd.to_numeric(col_series, errors="coerce")
         tm, td = col_transforms.get(col_i, (None, None))
@@ -360,7 +375,7 @@ def _build_excel(fd: dict) -> bytes:
             col_ltr  = xl_col_to_name(orig_idx)   # sheet col = df col index
             chart.add_series({
                 "name":       f"=Data!${col_ltr}$1",
-                "categories": f"=Data!$A$2:$A${n+1}",
+                "categories": f"=Data!${time_col_ltr}$2:${time_col_ltr}${n+1}",
                 "values":     f"=Data!${col_ltr}$2:${col_ltr}${n+1}",
                 "line":       {"color": series_color(col_name, fb_idx), "width": 1.25},
                 "marker":     {"type": "none"},
