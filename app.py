@@ -80,12 +80,22 @@ def parse_time(df):
     idx = find_time_col_idx(df)
     raw = df.iloc[:, idx].astype(str).str.strip()
     sample = raw.dropna().iloc[0] if not raw.dropna().empty else ""
+
+    # ISO format: YYYY-MM-DD HH:MM:SS
     if re.match(r"\d{4}-\d{2}-\d{2}", sample):
-        return pd.to_datetime(raw, format="%Y-%m-%d %H:%M:%S", errors="coerce")
-    return pd.to_datetime(
-        raw.str.replace(r"\s+", " ", regex=True),
-        format="%d/%m/%Y %H:%M:%S", errors="coerce",
-    )
+        result = pd.to_datetime(raw, format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        if result.notna().any():
+            return result
+
+    # DD/MM/YYYY H:MM:SS — collapse multiple spaces, zero-pad single-digit hour
+    normalised = raw.str.replace(r"\s+", " ", regex=True)
+    normalised = normalised.str.replace(r" (\d):", r" 0\1:", regex=True)
+    result = pd.to_datetime(normalised, format="%d/%m/%Y %H:%M:%S", errors="coerce")
+    if result.notna().any():
+        return result
+
+    # Final fallback: let pandas auto-detect (slower but handles edge cases)
+    return pd.to_datetime(normalised, dayfirst=True, errors="coerce")
 
 
 def find_cols_in(df, pattern):
