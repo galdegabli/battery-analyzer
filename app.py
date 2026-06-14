@@ -79,23 +79,39 @@ def parse_time(df):
     """Parse the date/time column (found by name) as datetime."""
     idx = find_time_col_idx(df)
     raw = df.iloc[:, idx].astype(str).str.strip()
-    sample = raw.dropna().iloc[0] if not raw.dropna().empty else ""
+    # Collapse any run of whitespace to a single space
+    normalised = raw.str.replace(r"\s+", " ", regex=True)
+    sample = normalised.dropna().iloc[0] if not normalised.dropna().empty else ""
+
+    # Debug: show what we see (remove after confirming fix)
+    st.caption(f"⏱ time col index={idx}, col name='{df.columns[idx]}', sample='{sample}'")
 
     # ISO format: YYYY-MM-DD HH:MM:SS
     if re.match(r"\d{4}-\d{2}-\d{2}", sample):
-        result = pd.to_datetime(raw, format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        result = pd.to_datetime(normalised, format="%Y-%m-%d %H:%M:%S", errors="coerce")
         if result.notna().any():
+            st.caption(f"✅ parsed via ISO format, {result.notna().sum()} valid timestamps")
             return result
 
-    # DD/MM/YYYY H:MM:SS — collapse multiple spaces, zero-pad single-digit hour
-    normalised = raw.str.replace(r"\s+", " ", regex=True)
-    normalised = normalised.str.replace(r" (\d):", r" 0\1:", regex=True)
+    # Try explicit DD/MM/YYYY %H:%M:%S (zero-padded hours, single space)
     result = pd.to_datetime(normalised, format="%d/%m/%Y %H:%M:%S", errors="coerce")
     if result.notna().any():
+        st.caption(f"✅ parsed via explicit DD/MM/YYYY format, {result.notna().sum()} valid timestamps")
         return result
 
-    # Final fallback: let pandas auto-detect (slower but handles edge cases)
-    return pd.to_datetime(normalised, dayfirst=True, errors="coerce")
+    # Zero-pad single-digit hour: " 8:" → " 08:", then retry
+    zero_padded = normalised.str.replace(r"(?<= )(\d)(?=:)", r"0\1", regex=True)
+    result = pd.to_datetime(zero_padded, format="%d/%m/%Y %H:%M:%S", errors="coerce")
+    if result.notna().any():
+        st.caption(f"✅ parsed via zero-padded DD/MM/YYYY format, {result.notna().sum()} valid timestamps")
+        return result
+
+    # Fallback: pandas auto-detect with dayfirst=True
+    st.caption(f"⚠️ falling back to auto-detect (dayfirst=True), sample='{sample}', zero_padded sample='{zero_padded.iloc[0]}'")
+    try:
+        return pd.to_datetime(normalised, format="mixed", dayfirst=True, errors="coerce")
+    except TypeError:
+        return pd.to_datetime(normalised, dayfirst=True, errors="coerce")
 
 
 def find_cols_in(df, pattern):
