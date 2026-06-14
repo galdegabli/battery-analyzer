@@ -266,8 +266,25 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
 
 def render_charts(df, time_col, charts, file_prefix=""):
     """Render the time slider + 4 charts for one file."""
-    t_min = time_col.min().to_pydatetime()
-    t_max = time_col.max().to_pydatetime()
+    valid_times = time_col.dropna().sort_values()
+    if valid_times.empty:
+        st.error("No valid timestamps found in the time column.")
+        return
+
+    # Use median ± 10 years to clip extreme outlier timestamps
+    median_time = valid_times.iloc[len(valid_times) // 2]
+    clip_delta = pd.Timedelta(days=365 * 10)
+    clipped = valid_times[(valid_times >= median_time - clip_delta) &
+                          (valid_times <= median_time + clip_delta)]
+    if clipped.empty:
+        clipped = valid_times  # fallback: use all
+
+    t_min = clipped.min().to_pydatetime()
+    t_max = clipped.max().to_pydatetime()
+
+    # Debug: show actual min/max used for the range (remove after confirming)
+    st.caption(f"📅 chart range: {t_min} → {t_max}  |  raw min: {valid_times.min()}  raw max: {valid_times.max()}")
+
     st.markdown("#### Time range")
     t_start, t_end = st.slider(
         f"time_range_{file_prefix}",
