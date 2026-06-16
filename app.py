@@ -290,7 +290,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
         f"time_range_{file_prefix}",
         min_value=t_min, max_value=t_max,
         value=(t_min, t_max), step=timedelta(minutes=1),
-        format="%d/%m/%y %H:%M", label_visibility="collapsed",
+        label_visibility="collapsed",
     )
     for idx, chart_def in enumerate(charts):
         st.subheader(f"Chart {idx+1} — {chart_def['title']}")
