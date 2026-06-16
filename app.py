@@ -10,8 +10,8 @@ import streamlit.components.v1 as components
 import xlsxwriter
 from xlsxwriter.utility import xl_col_to_name
 
-st.set_page_config(page_title="Battery Data Analyzer", layout="wide")
-st.title("Battery Data Analyzer")
+st.set_page_config(page_title="LOD Analyzer", layout="wide")
+st.title("LOD Analyzer")
 
 # ── 15 distinct colors (index = cell number) ────────────────────────────────────
 COLORS = [
