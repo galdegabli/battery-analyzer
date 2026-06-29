@@ -156,6 +156,10 @@ def build_charts(df):
                             + find_col_in(df, "Min Cell Voltage [mV]"),
             "subtitle":     "CellVoltage_0 – CellVoltage_14 vs Time",
             "auto_multiply": True,
+            # Max/Min are stored in mV; always scale by 0.001 to match CellVoltage units
+            "col_multiplies": {i: 0.001 for i in
+                               find_col_in(df, "Max Cell Voltage [mV]")
+                               + find_col_in(df, "Min Cell Voltage [mV]")},
             "y_label":      "Voltage [V]",
         },
         {
@@ -186,15 +190,17 @@ def build_charts(df):
 
 # ── Chart HTML builder (custom sorted hover via JS) ──────────────────────────────
 def make_chart_html(df, time_col, col_indices, title, chart_id,
-                    x_range=None, multiply=None, decimals=None, y_label="Value"):
+                    x_range=None, multiply=None, decimals=None, y_label="Value",
+                    col_multiplies=None):
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
             continue
         col_name = df.columns[i]
         y = pd.to_numeric(df.iloc[:, i], errors="coerce")
-        if multiply is not None:
-            y = y * multiply
+        m = (col_multiplies or {}).get(i, multiply)
+        if m is not None:
+            y = y * m
         if decimals is not None:
             y = y.round(decimals)
         fig.add_trace(go.Scatter(
@@ -315,6 +321,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
                 multiply=chart_def.get("multiply"),
                 decimals=chart_def.get("decimals"),
                 y_label=chart_def.get("y_label", "Value"),
+                col_multiplies=chart_def.get("col_multiplies"),
             ),
             height=630, scrolling=False,
         )
@@ -381,9 +388,11 @@ def _build_excel(fd: dict) -> bytes:
     for chart_def in charts:
         m_val = chart_def.get("multiply")
         d_val = chart_def.get("decimals")
-        if m_val is not None or d_val is not None:
-            for oi in chart_def["cols"]:
-                col_transforms[oi] = (m_val, d_val)
+        col_mult_overrides = chart_def.get("col_multiplies", {})
+        for oi in chart_def["cols"]:
+            m = col_mult_overrides.get(oi, m_val)
+            if m is not None or d_val is not None:
+                col_transforms[oi] = (m, d_val)
 
     buf = io.BytesIO()
     wb  = xlsxwriter.Workbook(buf, {"in_memory": True})
