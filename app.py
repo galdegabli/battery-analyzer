@@ -160,6 +160,9 @@ def build_charts(df):
             "col_multiplies": {i: 0.001 for i in
                                find_col_in(df, "Max Cell Voltage [mV]")
                                + find_col_in(df, "Min Cell Voltage [mV]")},
+            # Max/Min hidden by default; click the legend to show them
+            "hidden_cols": set(find_col_in(df, "Max Cell Voltage [mV]")
+                               + find_col_in(df, "Min Cell Voltage [mV]")),
             "y_label":      "Voltage [V]",
         },
         {
@@ -191,7 +194,7 @@ def build_charts(df):
 # ── Chart HTML builder (custom sorted hover via JS) ──────────────────────────────
 def make_chart_html(df, time_col, col_indices, title, chart_id,
                     x_range=None, multiply=None, decimals=None, y_label="Value",
-                    col_multiplies=None):
+                    col_multiplies=None, hidden_cols=None):
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -203,22 +206,24 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
             y = y * m
         if decimals is not None:
             y = y.round(decimals)
+        is_hidden = hidden_cols and i in hidden_cols
         fig.add_trace(go.Scatter(
             x=time_col, y=y, mode="lines", name=col_name,
             line=dict(color=series_color(col_name, fb_idx)),
             hoverinfo="none",
+            visible="legendonly" if is_hidden else True,
         ))
-    xaxis_cfg = dict(type="date", rangeslider=dict(visible=False))
+    xaxis_cfg = dict(type="date", rangeslider=dict(visible=False), title="Time")
     if x_range:
         xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
     fig.update_layout(
         title=dict(text=title, y=0.97, x=0.5, xanchor="center", yanchor="top"),
-        xaxis_title="Time", xaxis=xaxis_cfg,
+        xaxis=xaxis_cfg,
         yaxis=dict(fixedrange=False, title=y_label),
-        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5,
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5,
                     entrywidth=160, entrywidthmode="pixels"),
         hovermode="x", height=560,
-        margin=dict(t=40, b=110, l=60, r=20),
+        margin=dict(t=40, b=130, l=60, r=20),
     )
     fig_json = fig.to_json()
     return f"""
@@ -322,6 +327,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
                 decimals=chart_def.get("decimals"),
                 y_label=chart_def.get("y_label", "Value"),
                 col_multiplies=chart_def.get("col_multiplies"),
+                hidden_cols=chart_def.get("hidden_cols"),
             ),
             height=630, scrolling=False,
         )
