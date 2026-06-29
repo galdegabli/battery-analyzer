@@ -146,17 +146,20 @@ def build_charts(df):
             "title":    "Full Charge Capacity",
             "cols":     find_col_in(df, "SE Full_Charge_Capacity [Ah]"),
             "subtitle": "SE Full_Charge_Capacity [Ah] vs Time",
+            "y_label":  "Capacity [Ah]",
         },
         {
             "title":        "Cell Voltage",
             "cols":         find_cols_in(df, "CellVoltage_"),
             "subtitle":     "CellVoltage_0 – CellVoltage_14 vs Time",
             "auto_multiply": True,
+            "y_label":      "Voltage [V]",
         },
         {
             "title":    "Cell Distance",
             "cols":     find_cols_in(df, "CellDistanceAh_"),
             "subtitle": "CellDistanceAh_0 – CellDistanceAh_14 vs Time",
+            "y_label":  "Distance [Ah]",
         },
         {
             "title":    "Voltage Derivative",
@@ -173,7 +176,7 @@ def build_charts(df):
 
 # ── Chart HTML builder (custom sorted hover via JS) ──────────────────────────────
 def make_chart_html(df, time_col, col_indices, title, chart_id,
-                    x_range=None, multiply=None, decimals=None):
+                    x_range=None, multiply=None, decimals=None, y_label="Value"):
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -195,7 +198,7 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
     fig.update_layout(
         title=dict(text=title, y=0.97, x=0.5, xanchor="center", yanchor="top"),
         xaxis_title="Time", xaxis=xaxis_cfg,
-        yaxis=dict(fixedrange=False),
+        yaxis=dict(fixedrange=False, title=y_label),
         legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5,
                     entrywidth=160, entrywidthmode="pixels"),
         hovermode="x", height=560,
@@ -301,6 +304,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
                 x_range=(t_start, t_end),
                 multiply=chart_def.get("multiply"),
                 decimals=chart_def.get("decimals"),
+                y_label=chart_def.get("y_label", "Value"),
             ),
             height=630, scrolling=False,
         )
