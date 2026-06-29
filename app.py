@@ -169,6 +169,13 @@ def build_charts(df):
             "subtitle": "CellFdFVdQ_0 – CellFdFVdQ_14 vs Time",
             "decimals": 0,
         },
+        {
+            "title":    "Current",
+            "cols":     find_col_in(df, "BMS_AFE_current [10mA]"),
+            "subtitle": "BMS_AFE_current [10mA] vs Time",
+            "multiply": 0.01,
+            "y_label":  "Current [A]",
+        },
     ]
     for c in charts:
         if c.get("auto_multiply") and c["cols"]:
