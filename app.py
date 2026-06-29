@@ -150,7 +150,9 @@ def build_charts(df):
         },
         {
             "title":        "Cell Voltage",
-            "cols":         find_cols_in(df, "CellVoltage_"),
+            "cols":         find_cols_in(df, "CellVoltage_")
+                            + find_col_in(df, "Max Cell Voltage[mV]")
+                            + find_col_in(df, "Min Cell Voltage[mV]"),
             "subtitle":     "CellVoltage_0 – CellVoltage_14 vs Time",
             "auto_multiply": True,
             "y_label":      "Voltage [V]",
