@@ -125,7 +125,8 @@ def find_cols_in(df, pattern):
 
 
 def find_col_in(df, name):
-    return [i for i, c in enumerate(df.columns) if c == name][:1]
+    target = name.strip().lower()
+    return [i for i, c in enumerate(df.columns) if str(c).strip().lower() == target][:1]
 
 
 def _auto_multiply(df, col_indices):
