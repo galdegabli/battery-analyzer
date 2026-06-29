@@ -338,6 +338,9 @@ for f in uploaded_files:
             "is_re_export": is_re_export,
         })
     st.success(f"**{f.name}**: {len(df):,} rows × {len(df.columns)} columns")
+    with st.expander("🔍 Debug: column names containing 'voltage' or 'current'", expanded=False):
+        matches = [c for c in df.columns if any(k in str(c).lower() for k in ("voltage", "current"))]
+        st.write(matches if matches else "none found")
 
 
 # ── Display charts ───────────────────────────────────────────────────────────────
