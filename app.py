@@ -338,9 +338,13 @@ for f in uploaded_files:
             "is_re_export": is_re_export,
         })
     st.success(f"**{f.name}**: {len(df):,} rows × {len(df.columns)} columns")
-    with st.expander("🔍 Debug: column names containing 'voltage' or 'current'", expanded=False):
-        matches = [c for c in df.columns if any(k in str(c).lower() for k in ("voltage", "current"))]
-        st.write(matches if matches else "none found")
+    with st.expander("🔍 Debug: voltage/current columns + medians", expanded=False):
+        rows = []
+        for ci, col in enumerate(df.columns):
+            if any(k in str(col).lower() for k in ("voltage", "current")):
+                med = pd.to_numeric(df.iloc[:, ci], errors="coerce").median()
+                rows.append({"col_index": ci, "name": col, "median": med})
+        st.dataframe(rows)
 
 
 # ── Display charts ───────────────────────────────────────────────────────────────
