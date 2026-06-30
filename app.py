@@ -83,31 +83,24 @@ def parse_time(df):
     normalised = raw.str.replace(r"\s+", " ", regex=True)
     sample = normalised.dropna().iloc[0] if not normalised.dropna().empty else ""
 
-    # Debug: show what we see (remove after confirming fix)
-    st.caption(f"⏱ time col index={idx}, col name='{df.columns[idx]}', sample='{sample}'")
-
     # ISO format: YYYY-MM-DD HH:MM:SS
     if re.match(r"\d{4}-\d{2}-\d{2}", sample):
         result = pd.to_datetime(normalised, format="%Y-%m-%d %H:%M:%S", errors="coerce")
         if result.notna().any():
-            st.caption(f"✅ parsed via ISO format, {result.notna().sum()} valid timestamps")
             return result
 
     # Try explicit DD/MM/YYYY %H:%M:%S (zero-padded hours, single space)
     result = pd.to_datetime(normalised, format="%d/%m/%Y %H:%M:%S", errors="coerce")
     if result.notna().any():
-        st.caption(f"✅ parsed via explicit DD/MM/YYYY format, {result.notna().sum()} valid timestamps")
         return result
 
     # Zero-pad single-digit hour: " 8:" → " 08:", then retry
     zero_padded = normalised.str.replace(r"(?<= )(\d)(?=:)", r"0\1", regex=True)
     result = pd.to_datetime(zero_padded, format="%d/%m/%Y %H:%M:%S", errors="coerce")
     if result.notna().any():
-        st.caption(f"✅ parsed via zero-padded DD/MM/YYYY format, {result.notna().sum()} valid timestamps")
         return result
 
     # Fallback: pandas auto-detect with dayfirst=True
-    st.caption(f"⚠️ falling back to auto-detect (dayfirst=True), sample='{sample}', zero_padded sample='{zero_padded.iloc[0]}'")
     try:
         return pd.to_datetime(normalised, format="mixed", dayfirst=True, errors="coerce")
     except TypeError:
@@ -145,8 +138,9 @@ def build_charts(df):
     charts = [
         {
             "title":    "Full Charge Capacity",
-            "cols":     find_col_in(df, "SE Full_Charge_Capacity [Ah]"),
-            "subtitle": "SE Full_Charge_Capacity [Ah] vs Time",
+            "cols":     find_col_in(df, "SE Full_Charge_Capacity [Ah]")
+                        + find_col_in(df, "SE_Full_Charge_Capacity [10mAh]"),
+            "subtitle": "Full Charge Capacity vs Time",
             "y_label":  "Capacity [Ah]",
         },
         {
@@ -306,9 +300,6 @@ def render_charts(df, time_col, charts, file_prefix=""):
     t_min = clipped.min().to_pydatetime()
     t_max = clipped.max().to_pydatetime()
 
-    # Debug: show actual min/max used for the range (remove after confirming)
-    st.caption(f"📅 chart range: {t_min} → {t_max}  |  raw min: {valid_times.min()}  raw max: {valid_times.max()}")
-
     st.markdown("#### Time range")
     t_start, t_end = st.slider(
         f"time_range_{file_prefix}",
@@ -351,13 +342,6 @@ for f in uploaded_files:
             "is_re_export": is_re_export,
         })
     st.success(f"**{f.name}**: {len(df):,} rows × {len(df.columns)} columns")
-    with st.expander("🔍 Debug: voltage/current columns + medians", expanded=False):
-        rows = []
-        for ci, col in enumerate(df.columns):
-            if any(k in str(col).lower() for k in ("voltage", "current")):
-                med = pd.to_numeric(df.iloc[:, ci], errors="coerce").median()
-                rows.append({"col_index": ci, "name": col, "median": med})
-        st.dataframe(rows)
 
 
 # ── Display charts ───────────────────────────────────────────────────────────────
