@@ -141,6 +141,7 @@ def build_charts(df):
             "cols":     find_col_in(df, "SE Full_Charge_Capacity [Ah]")
                         + find_col_in(df, "SE_Full_Charge_Capacity [10mAh]"),
             "subtitle": "Full Charge Capacity vs Time",
+            "col_multiplies": {i: 0.01 for i in find_col_in(df, "SE_Full_Charge_Capacity [10mAh]")},
             "y_label":  "Capacity [Ah]",
         },
         {
