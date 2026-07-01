@@ -183,7 +183,7 @@ def build_charts(df):
             "title":    "Cell Temperature",
             "cols":     find_cols_in(df, "CellTempSensor_"),
             "subtitle": "CellTempSensor_0 – CellTempSensor_10 vs Time",
-            "y_label":  "Temperature [°C]",
+            "y_label":  "Temperature [\u00b0C]",
             "add_avg":  True,
         },
     ]
