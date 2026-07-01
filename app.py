@@ -179,6 +179,13 @@ def build_charts(df):
             "multiply": 0.01,
             "y_label":  "Current [A]",
         },
+        {
+            "title":    "Cell Temperature",
+            "cols":     find_cols_in(df, "CellTempSensor_"),
+            "subtitle": "CellTempSensor_0 – CellTempSensor_10 vs Time",
+            "y_label":  "Temperature [°C]",
+            "add_avg":  True,
+        },
     ]
     for c in charts:
         if c.get("auto_multiply") and c["cols"]:
@@ -189,7 +196,7 @@ def build_charts(df):
 # ── Chart HTML builder (custom sorted hover via JS) ──────────────────────────────
 def make_chart_html(df, time_col, col_indices, title, chart_id,
                     x_range=None, multiply=None, decimals=None, y_label="Value",
-                    col_multiplies=None, hidden_cols=None):
+                    col_multiplies=None, hidden_cols=None, add_avg=False):
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -208,6 +215,21 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
             hoverinfo="none",
             visible="legendonly" if is_hidden else True,
         ))
+    if add_avg and col_indices:
+        valid = [i for i in col_indices if i < len(df.columns)]
+        if valid:
+            all_y = pd.concat(
+                [pd.to_numeric(df.iloc[:, i], errors="coerce") * ((col_multiplies or {}).get(i, multiply) or 1)
+                 for i in valid], axis=1
+            )
+            y_avg = all_y.mean(axis=1)
+            if decimals is not None:
+                y_avg = y_avg.round(decimals)
+            fig.add_trace(go.Scatter(
+                x=time_col, y=y_avg, mode="lines", name="Average",
+                line=dict(color="#000000", width=2.5, dash="dash"),
+                hoverinfo="none",
+            ))
     xaxis_cfg = dict(type="date", rangeslider=dict(visible=False), title="Time")
     if x_range:
         xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
@@ -320,6 +342,7 @@ def render_charts(df, time_col, charts, file_prefix=""):
                 y_label=chart_def.get("y_label", "Value"),
                 col_multiplies=chart_def.get("col_multiplies"),
                 hidden_cols=chart_def.get("hidden_cols"),
+                add_avg=chart_def.get("add_avg", False),
             ),
             height=630, scrolling=False,
         )
