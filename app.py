@@ -186,6 +186,16 @@ def build_charts(df):
             "y_label":  "Temperature [\u00b0C]",
             "add_avg":  True,
         },
+        {
+            "title":         "Derivative vs SOC",
+            "cols":          find_cols_in(df, "CellFdFVdQ_"),
+            "subtitle":      "CellFdFVdQ_0 – CellFdFVdQ_14 vs SOC",
+            "decimals":      0,
+            "y_label":       "dV/dQ",
+            "x_col_indices": find_col_in(df, "SE_SOC [0.01%]"),
+            "x_multiply":    0.01,
+            "x_label":       "SOC [%]",
+        },
     ]
     for c in charts:
         if c.get("auto_multiply") and c["cols"]:
@@ -196,7 +206,8 @@ def build_charts(df):
 # ── Chart HTML builder (custom sorted hover via JS) ──────────────────────────────
 def make_chart_html(df, time_col, col_indices, title, chart_id,
                     x_range=None, multiply=None, decimals=None, y_label="Value",
-                    col_multiplies=None, hidden_cols=None, add_avg=False):
+                    col_multiplies=None, hidden_cols=None, add_avg=False,
+                    x_label="Time", x_is_date=True):
     fig = go.Figure()
     for fb_idx, i in enumerate(col_indices):
         if i >= len(df.columns):
@@ -230,9 +241,12 @@ def make_chart_html(df, time_col, col_indices, title, chart_id,
                 line=dict(color="#000000", width=2.5, dash="dash"),
                 hoverinfo="none",
             ))
-    xaxis_cfg = dict(type="date", rangeslider=dict(visible=False), title="Time")
-    if x_range:
-        xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
+    if x_is_date:
+        xaxis_cfg = dict(type="date", rangeslider=dict(visible=False), title=x_label)
+        if x_range:
+            xaxis_cfg["range"] = [x_range[0].isoformat(), x_range[1].isoformat()]
+    else:
+        xaxis_cfg = dict(title=x_label)
     fig.update_layout(
         title=dict(text=title, y=0.97, x=0.5, xanchor="center", yanchor="top"),
         xaxis=xaxis_cfg,
@@ -332,17 +346,26 @@ def render_charts(df, time_col, charts, file_prefix=""):
     )
     for idx, chart_def in enumerate(charts):
         st.subheader(f"Chart {idx+1} — {chart_def['title']}")
+        x_col_indices = chart_def.get("x_col_indices")
+        if x_col_indices:
+            xi = x_col_indices[0]
+            x_data = pd.to_numeric(df.iloc[:, xi], errors="coerce") * chart_def.get("x_multiply", 1)
+            x_arg, x_range_arg, x_is_date = x_data, None, False
+        else:
+            x_arg, x_range_arg, x_is_date = time_col, (t_start, t_end), True
         components.html(
             make_chart_html(
-                df, time_col, chart_def["cols"], chart_def["subtitle"],
+                df, x_arg, chart_def["cols"], chart_def["subtitle"],
                 f"{file_prefix}c{idx}",
-                x_range=(t_start, t_end),
+                x_range=x_range_arg,
                 multiply=chart_def.get("multiply"),
                 decimals=chart_def.get("decimals"),
                 y_label=chart_def.get("y_label", "Value"),
                 col_multiplies=chart_def.get("col_multiplies"),
                 hidden_cols=chart_def.get("hidden_cols"),
                 add_avg=chart_def.get("add_avg", False),
+                x_label=chart_def.get("x_label", "Time"),
+                x_is_date=x_is_date,
             ),
             height=630, scrolling=False,
         )
