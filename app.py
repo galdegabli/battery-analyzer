@@ -38,6 +38,23 @@ def series_color(col_name: str, fallback_idx: int) -> str:
     return COLORS[idx % len(COLORS)]
 
 
+def detect_charge_cycles(soc, min_len=50):
+    """Label charging rows with a cycle ID (1-based). NaN = discharge/idle."""
+    s = pd.to_numeric(soc, errors="coerce").reset_index(drop=True)
+    # 5-step diff smooths small noise; positive = SOC rising = charging
+    charging = s.diff(periods=5).fillna(0) > 0
+    boundary = (charging != charging.shift(fill_value=False)).cumsum()
+    result = pd.Series(float("nan"), index=s.index)
+    cyc = 0
+    for _bid, grp in charging.groupby(boundary):
+        if not grp.iloc[0]:
+            continue
+        if len(grp) >= min_len:
+            cyc += 1
+            result.iloc[grp.index] = float(cyc)
+    return result
+
+
 # ── File upload (multiple) ───────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
     "Upload Excel or CSV files", type=["xlsx", "xls", "csv"],
@@ -195,6 +212,7 @@ def build_charts(df):
             "x_col_indices": find_col_in(df, "SE_SOC [0.01%]"),
             "x_multiply":    0.01,
             "x_label":       "SOC [%]",
+            "detect_cycles": True,
         },
     ]
     for c in charts:
@@ -350,12 +368,31 @@ def render_charts(df, time_col, charts, file_prefix=""):
         if x_col_indices:
             xi = x_col_indices[0]
             x_data = pd.to_numeric(df.iloc[:, xi], errors="coerce") * chart_def.get("x_multiply", 1)
-            x_arg, x_range_arg, x_is_date = x_data, None, False
+            if chart_def.get("detect_cycles") and xi < len(df.columns):
+                cycle_ids = detect_charge_cycles(x_data)
+                n_cycles = int(cycle_ids.max()) if cycle_ids.notna().any() else 0
+                if n_cycles > 0:
+                    all_labels = [f"Cycle {i}" for i in range(1, n_cycles + 1)]
+                    selected = st.multiselect(
+                        f"cycles_{file_prefix}_{idx}",
+                        options=all_labels, default=all_labels,
+                        label_visibility="collapsed",
+                    )
+                    sel_nums = {int(s.split()[1]) for s in selected}
+                    mask = cycle_ids.isin(sel_nums)
+                    df_plot = df[mask].reset_index(drop=True)
+                    x_arg = x_data[mask].reset_index(drop=True)
+                else:
+                    df_plot, x_arg = df, x_data
+            else:
+                df_plot, x_arg = df, x_data
+            x_range_arg, x_is_date = None, False
         else:
+            df_plot = df
             x_arg, x_range_arg, x_is_date = time_col, (t_start, t_end), True
         components.html(
             make_chart_html(
-                df, x_arg, chart_def["cols"], chart_def["subtitle"],
+                df_plot, x_arg, chart_def["cols"], chart_def["subtitle"],
                 f"{file_prefix}c{idx}",
                 x_range=x_range_arg,
                 multiply=chart_def.get("multiply"),
