@@ -152,30 +152,34 @@ def _auto_multiply(df, col_indices):
 
 
 def build_charts(df):
+    # Pre-compute column groups for charts that need format detection
+    _v_old   = find_cols_in(df, "CellVoltage_")           # old format, stored in V
+    _v_new   = find_cols_in(df, "Cell Voltage [mV]_")     # new format, stored in mV
+    _v_mm    = (find_col_in(df, "Max Cell Voltage [mV]")
+                + find_col_in(df, "Min Cell Voltage [mV]"))
+    _afe_old = find_col_in(df, "BMS_AFE_current [10mA]")  # old format, in 10 mA
+    _afe_new = find_col_in(df, "AFE Current [A]")          # new format, already in A
+    _t_old   = find_cols_in(df, "CellTempSensor_")
+    _t_new   = find_cols_in(df, "Cell Temp Sensor [C]_")
+
     charts = [
         {
             "title":    "Full Charge Capacity",
-            "cols":     find_col_in(df, "SE Full_Charge_Capacity [Ah]")
-                        + find_col_in(df, "SE_Full_Charge_Capacity [10mAh]"),
+            "cols":     (find_col_in(df, "SE Full_Charge_Capacity [Ah]")
+                         + find_col_in(df, "SE_Full_Charge_Capacity [10mAh]")
+                         + find_col_in(df, "Full_Charge_Capacity [Ah]")),
             "subtitle": "Full Charge Capacity vs Time",
             "col_multiplies": {i: 0.01 for i in find_col_in(df, "SE_Full_Charge_Capacity [10mAh]")},
             "y_label":  "Capacity [Ah]",
         },
         {
-            "title":        "Cell Voltage",
-            "cols":         find_cols_in(df, "CellVoltage_")
-                            + find_col_in(df, "Max Cell Voltage [mV]")
-                            + find_col_in(df, "Min Cell Voltage [mV]"),
-            "subtitle":     "CellVoltage_0 – CellVoltage_14 vs Time",
-            "auto_multiply": True,
-            # Max/Min are stored in mV; always scale by 0.001 to match CellVoltage units
-            "col_multiplies": {i: 0.001 for i in
-                               find_col_in(df, "Max Cell Voltage [mV]")
-                               + find_col_in(df, "Min Cell Voltage [mV]")},
-            # Max/Min hidden by default; click the legend to show them
-            "hidden_cols": set(find_col_in(df, "Max Cell Voltage [mV]")
-                               + find_col_in(df, "Min Cell Voltage [mV]")),
-            "y_label":      "Voltage [V]",
+            "title":    "Cell Voltage",
+            "cols":     _v_old + _v_new + _v_mm,
+            "subtitle": "Cell Voltages vs Time",
+            "multiply":  _auto_multiply(df, _v_old) if _v_old else None,
+            "col_multiplies": {i: 0.001 for i in _v_new + _v_mm},
+            "hidden_cols":    set(_v_mm),
+            "y_label":        "Voltage [V]",
         },
         {
             "title":    "Cell Distance",
@@ -191,16 +195,16 @@ def build_charts(df):
         },
         {
             "title":    "Current",
-            "cols":     find_col_in(df, "BMS_AFE_current [10mA]"),
-            "subtitle": "BMS_AFE_current [10mA] vs Time",
-            "multiply": 0.01,
+            "cols":     _afe_old + _afe_new,
+            "subtitle": "Current vs Time",
+            "col_multiplies": {i: 0.01 for i in _afe_old},
             "y_label":  "Current [A]",
         },
         {
             "title":    "Cell Temperature",
-            "cols":     find_cols_in(df, "CellTempSensor_"),
-            "subtitle": "CellTempSensor_0 – CellTempSensor_10 vs Time",
-            "y_label":  "Temperature [\u00b0C]",
+            "cols":     _t_old + _t_new,
+            "subtitle": "Cell Temperature vs Time",
+            "y_label":  "Temperature [°C]",
             "add_avg":  True,
         },
         {
@@ -215,9 +219,6 @@ def build_charts(df):
             "detect_cycles": True,
         },
     ]
-    for c in charts:
-        if c.get("auto_multiply") and c["cols"]:
-            c["multiply"] = _auto_multiply(df, c["cols"])
     return charts
 
 
@@ -363,6 +364,15 @@ def render_charts(df, time_col, charts, file_prefix=""):
         label_visibility="collapsed",
     )
     for idx, chart_def in enumerate(charts):
+        if not chart_def["cols"]:
+            st.markdown(
+                f'<p style="opacity:0.35;font-size:1.15em;font-weight:600;margin:0.6em 0">'
+                f'Chart {idx+1} — {chart_def["title"]}'
+                f' &nbsp;<em style="font-weight:normal;font-size:0.85em">'
+                f'(no matching data in this file)</em></p>',
+                unsafe_allow_html=True,
+            )
+            continue
         st.subheader(f"Chart {idx+1} — {chart_def['title']}")
         x_col_indices = chart_def.get("x_col_indices")
         if x_col_indices:
